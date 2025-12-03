@@ -87,24 +87,26 @@ export default function NewInspection() {
     const { data: auth } = await supabase.auth.getUser();
     if (!auth.user) return alert('Not signed in');
 
-    const payload = {
-      inspection_type: 'Field Safety Inspection',
-      inspector,
-      project_title: projectTitle,
-      entity_receiving_inspection: entity,
-      date_of_inspection: date,
-      ppe_checks,
-      lockout_tagout: { checks: lockoutTagoutChecks, other: lockoutOther, otherVal: lockoutOtherVal, comments: lockoutComments },
-      hot_work: { checks: hotWorkChecks, other: hotWorkOther, otherVal: hotWorkOtherVal, comments: hotWorkComments },
-      confined_space: { checks: confinedSpaceChecks, other1: confinedOther1, other1Val: confinedOther1Val, other2: confinedOther2, other2Val: confinedOther2Val, comments: confinedComments },
-      equipment: { checks: equipmentChecks, other1: equipmentOther1, other1Val: equipmentOther1Val, other2: equipmentOther2, other2Val: equipmentOther2Val, comments: equipmentComments },
-      scaffolding: { checks: scaffoldingChecks, other1: scaffoldingOther1, other1Val: scaffoldingOther1Val, other2: scaffoldingOther2, other2Val: scaffoldingOther2Val, comments: scaffoldingComments },
-      housekeeping: { checks: housekeepingChecks, other1: housekeepingOther1, other1Val: housekeepingOther1Val, other2: housekeepingOther2, other2Val: housekeepingOther2Val, comments: housekeepingComments },
-      work_practices: workPractices,
-      general_comments: generalComments,
-      status: 'completed',
-      created_by: auth.user.id
-    };
+    
+const payload = {
+  inspection_type: 'Field Safety Inspection',
+  inspector,
+  project_title: projectTitle,
+  entity_receiving_inspection: entity,
+  date_of_inspection: date,
+  ppeChecks, // ✅ fixed
+  lockout_tagout: { checks: lockoutTagoutChecks, other: lockoutOther, otherVal: lockoutOtherVal, comments: lockoutComments },
+  hot_work: { checks: hotWorkChecks, other: hotWorkOther, otherVal: hotWorkOtherVal, comments: hotWorkComments },
+  confined_space: { checks: confinedSpaceChecks, other1: confinedOther1, other1Val: confinedOther1Val, other2: confinedOther2, other2Val: confinedOther2Val, comments: confinedComments },
+  equipment: { checks: equipmentChecks, other1: equipmentOther1, other1Val: equipmentOther1Val, other2: equipmentOther2, other2Val: equipmentOther2Val, comments: equipmentComments },
+  scaffolding: { checks: scaffoldingChecks, other1: scaffoldingOther1, other1Val: scaffoldingOther1Val, other2: scaffoldingOther2, other2Val: scaffoldingOther2Val, comments: scaffoldingComments },
+  housekeeping: { checks: housekeepingChecks, other1: housekeepingOther1, other1Val: housekeepingOther1Val, other2: housekeepingOther2, other2Val: housekeepingOther2Val, comments: housekeepingComments },
+  work_practices: workPractices,
+  general_comments: generalComments,
+  status: 'completed',
+  created_by: auth.user.id
+};
+
 
     const { error } = await supabase.from('inspections').insert(payload);
     if (error) return alert(error.message);
