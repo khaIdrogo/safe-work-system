@@ -1,3 +1,4 @@
+
 'use client';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
@@ -14,8 +15,75 @@ const renderYNN = (current: YesNoNA, onChange: (v: YesNoNA) => void) => (
   </div>
 );
 
+// Build a typed Record<string, YesNoNA> with all values initialized to 'N/A'
 const createSectionState = (items: string): Record<string, YesNoNA> =>
   Object.fromEntries(items.split('|').map(k => [k.trim(), 'N/A'])) as Record<string, YesNoNA>;
+
+/** Small helper component to render a section block with:
+ * - Title
+ * - A set of items with Yes/No/N/A radios
+ * - Optional "Other" text + radio value(s)
+ * - Comments textarea
+ */
+function Section({
+  title,
+  checks,
+  setChecks,
+  otherFields,
+  commentsValue,
+  setCommentsValue,
+}: {
+  title: string;
+  checks: Record<string, YesNoNA>;
+  setChecks: (v: Record<string, YesNoNA>) => void;
+  otherFields?: {
+    label: string;
+    value: string;
+    setValue: (v: string) => void;
+    val: YesNoNA;
+    setVal: (v: YesNoNA) => void;
+  }[];
+  commentsValue?: string;
+  setCommentsValue?: (v: string) => void;
+}) {
+  return (
+    <div className="border rounded">
+      <div className="bg-kmGray px-3 py-2 font-semibold">{title}</div>
+      <div className="p-3 grid md:grid-cols-2 gap-4">
+        {Object.keys(checks).map((item) => (
+          <div key={item} className="border p-2 rounded">
+            <div className="font-medium mb-2">{item}</div>
+            {renderYNN(checks[item], (v) => setChecks({ ...checks, [item]: v }))}
+          </div>
+        ))}
+
+        {otherFields?.map((o) => (
+          <div key={o.label} className="border p-2 rounded md:col-span-1">
+            <label className="font-medium">{o.label}</label>
+            <input
+              value={o.value}
+              onChange={(e) => o.setValue(e.target.value)}
+              className="mt-1 mb-2 w-full border rounded px-2 py-1"
+            />
+            {renderYNN(o.val, o.setVal)}
+          </div>
+        ))}
+
+        {commentsValue !== undefined && setCommentsValue && (
+          <div className="md:col-span-2">
+            <label className="font-medium">Comments</label>
+            <textarea
+              rows={3}
+              value={commentsValue}
+              onChange={(e) => setCommentsValue(e.target.value)}
+              className="w-full border rounded px-2 py-1"
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function NewInspection() {
   const [inspector, setInspector] = useState('');
@@ -101,6 +169,7 @@ export default function NewInspection() {
       project_title: projectTitle,
       entity_receiving_inspection: entity,
       date_of_inspection: date,
+      // snake_case for DB columns:
       ppe_checks: ppeChecks,
       lockout_tagout: { checks: lockoutTagoutChecks, other: lockoutOther, otherVal: lockoutOtherVal, comments: lockoutComments },
       hot_work: { checks: hotWorkChecks, other: hotWorkOther, otherVal: hotWorkOtherVal, comments: hotWorkComments },
@@ -142,26 +211,140 @@ export default function NewInspection() {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-bold">Perform New Inspection</h2>
-      {/* Render all sections similarly */}
-      {/* PPE Section */}
-      {/* Lockout / Tagout Section */}
-      {/* Hot Work Section */}
-      {/* Confined Space Section */}
-      {/* Equipment Section */}
-      {/* Scaffolding Section */}
-      {/* Housekeeping Section */}
-      <div>
-        <label>Work Practices</label>
-        <textarea rows={4} value={workPractices} onChange={e => setWorkPractices(e.target.value)} className="w-full" />
+
+      {/* Header details */}
+      <div className="border rounded">
+        <div className="bg-kmGray px-3 py-2 font-semibold">Field Safety Inspection</div>
+        <div className="p-3 grid md:grid-cols-2 gap-4">
+          <div>
+            <label className="font-medium">Inspector</label>
+            <input value={inspector} onChange={(e) => setInspector(e.target.value)} className="mt-1 w-full border rounded px-2 py-1" />
+          </div>
+          <div>
+            <label className="font-medium">Date of Inspection</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 w-full border rounded px-2 py-1" />
+          </div>
+          <div className="md:col-span-2">
+            <label className="font-medium">Project Title and Number</label>
+            <input value={projectTitle} onChange={(e) => setProjectTitle(e.target.value)} className="mt-1 w-full border rounded px-2 py-1" />
+          </div>
+          <div className="md:col-span-2">
+            <label className="font-medium">Entity Receiving Inspection</label>
+            <input value={entity} onChange={(e) => setEntity(e.target.value)} className="mt-1 w-full border rounded px-2 py-1" />
+          </div>
+        </div>
       </div>
+
+      {/* PPE */}
+      <Section
+        title="Personal Protective Equipment"
+        checks={ppeChecks}
+        setChecks={setPpeChecks}
+        commentsValue={undefined}
+        setCommentsValue={undefined}
+      />
+
+      {/* Lockout / Tagout */}
+      <Section
+        title="Lockout / Tagout"
+        checks={lockoutTagoutChecks}
+        setChecks={setLockoutTagoutChecks}
+        otherFields={[
+          { label: 'Other', value: lockoutOther, setValue: setLockoutOther, val: lockoutOtherVal, setVal: setLockoutOtherVal },
+        ]}
+        commentsValue={lockoutComments}
+        setCommentsValue={setLockoutComments}
+      />
+
+      {/* Hot Work */}
+      <Section
+        title="Hot Work"
+        checks={hotWorkChecks}
+        setChecks={setHotWorkChecks}
+        otherFields={[
+          { label: 'Other', value: hotWorkOther, setValue: setHotWorkOther, val: hotWorkOtherVal, setVal: setHotWorkOtherVal },
+        ]}
+        commentsValue={hotWorkComments}
+        setCommentsValue={setHotWorkComments}
+      />
+
+      {/* Confined Space */}
+      <Section
+        title="Confined Space"
+        checks={confinedSpaceChecks}
+        setChecks={setConfinedSpaceChecks}
+        otherFields={[
+          { label: 'Other 1', value: confinedOther1, setValue: setConfinedOther1, val: confinedOther1Val, setVal: setConfinedOther1Val },
+          { label: 'Other 2', value: confinedOther2, setValue: setConfinedOther2, val: confinedOther2Val, setVal: setConfinedOther2Val },
+        ]}
+        commentsValue={confinedComments}
+        setCommentsValue={setConfinedComments}
+      />
+
+      {/* Equipment */}
+      <Section
+        title="Equipment"
+        checks={equipmentChecks}
+        setChecks={setEquipmentChecks}
+        otherFields={[
+          { label: 'Other 1', value: equipmentOther1, setValue: setEquipmentOther1, val: equipmentOther1Val, setVal: setEquipmentOther1Val },
+          { label: 'Other 2', value: equipmentOther2, setValue: setEquipmentOther2, val: equipmentOther2Val, setVal: setEquipmentOther2Val },
+        ]}
+        commentsValue={equipmentComments}
+        setCommentsValue={setEquipmentComments}
+      />
+
+      {/* Scaffolding */}
+      <Section
+        title="Scaffolding"
+        checks={scaffoldingChecks}
+        setChecks={setScaffoldingChecks}
+        otherFields={[
+          { label: 'Other 1', value: scaffoldingOther1, setValue: setScaffoldingOther1, val: scaffoldingOther1Val, setVal: setScaffoldingOther1Val },
+          { label: 'Other 2', value: scaffoldingOther2, setValue: setScaffoldingOther2, val: scaffoldingOther2Val, setVal: setScaffoldingOther2Val },
+        ]}
+        commentsValue={scaffoldingComments}
+        setCommentsValue={setScaffoldingComments}
+      />
+
+      {/* Housekeeping */}
+      <Section
+        title="Housekeeping"
+        checks={housekeepingChecks}
+        setChecks={setHousekeepingChecks}
+        otherFields={[
+          { label: 'Other 1', value: housekeepingOther1, setValue: setHousekeepingOther1, val: housekeepingOther1Val, setVal: setHousekeepingOther1Val },
+          { label: 'Other 2', value: housekeepingOther2, setValue: setHousekeepingOther2, val: housekeepingOther2Val, setVal: setHousekeepingOther2Val },
+        ]}
+        commentsValue={housekeepingComments}
+        setCommentsValue={setHousekeepingComments}
+      />
+
+      {/* Work Practices */}
       <div>
-        <label>General Comments</label>
-        <textarea rows={4} value={generalComments} onChange={e => setGeneralComments(e.target.value)} className="w-full" />
+        <label className="font-medium">Work Practices</label>
+        <textarea
+          rows={4}
+          value={workPractices}
+          onChange={(e) => setWorkPractices(e.target.value)}
+          className="w-full border rounded px-2 py-1"
+        />
       </div>
+
+      {/* General Comments */}
+      <div>
+        <label className="font-medium">General Comments</label>
+        <textarea
+          rows={4}
+          value={generalComments}
+          onChange={(e) => setGeneralComments(e.target.value)}
+          className="w-full border rounded px-2 py-1"
+        />
+      </div>
+
       <div className="flex gap-4">
         <button className="bg-kmGreen text-white px-4 py-2 rounded" onClick={submit}>Submit</button>
         <button className="bg-kmRed text-white px-4 py-2 rounded" onClick={() => window.close()}>Cancel</button>
       </div>
     </div>
   );
-}
