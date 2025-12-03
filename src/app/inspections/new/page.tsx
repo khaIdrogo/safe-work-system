@@ -28,7 +28,8 @@ export default function NewInspection() {
   const [ppeChecks, setPpeChecks] = useState<Record<string, YesNoNA>>(Object.fromEntries(PPE.map(k => [k, 'N/A'])));
 
   // Helper to create section state
-  const createSectionState = (items: string) => Object.fromEntries(items.split('|').map(k => [k.trim(), 'N/A']));
+ const createSectionState = (items: string): Record<string, YesNoNA> =>
+
 
   // Lockout / Tagout
   const [lockoutTagoutChecks, setLockoutTagoutChecks] = useState(createSectionState('Electric|Hydraulic|Pneumatic|Lock Box In Use|Individual Personnel Locks In Place'));
