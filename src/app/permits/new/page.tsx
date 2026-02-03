@@ -263,7 +263,7 @@ export default function NewPermit() {
     });
   };
 
-  const setNestedText = (section: keyof typeof formData, key: string, value: string) => {
+  const setNestedText = (section: keyof typeof formData, key: string, value: string | boolean) => {
     setFormData(prev => ({
       ...prev,
       [section]: {
