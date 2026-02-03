@@ -32,19 +32,17 @@ const TIME_COLUMNS = [
   '12hr',
 ];
 
-// Build 6 rows: use gases from constants; if fewer than 6, add "Other".
-const buildGasRows = () => {
-  const rows = AIR_MONITORING_GASES.map(({ gas }) => gas);
-  while (rows.length < 6) rows.push('Other');
-  return rows.slice(0, 6);
-};
-const GAS_ROWS = buildGasRows();
+// Use gases exactly from constants (no "Other" row)
+const GAS_ROWS = AIR_MONITORING_GASES.map(({ gas }) => gas);
 
 export default function NewPermit() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Core form state
+  // UI toggle: VOC N/A disables that row
+  const [vocNA, setVocNA] = useState(false);
+
+  // Main state
   const [formData, setFormData] = useState({
     facility: '',
     location: '',
@@ -52,9 +50,9 @@ export default function NewPermit() {
     description_of_work: '',
     date_issued: '',
     time_issued: '',
-    date_expired: '',
-    time_expired: '',
-    permit_types: {} as JsonMap,        // includes inline PRCS/NPRCS flags under Confined Space
+    date_expires: '',
+    time_expires: '',
+    permit_types: {} as JsonMap,        // includes PRCS/NPRCS flags next to Confined Space
     ppe_requirements: {} as JsonMap,
     additional_ppe: {} as JsonMap,
     hazard_reduction: {} as JsonMap,
@@ -62,15 +60,15 @@ export default function NewPermit() {
     energy_control: {} as JsonMap,
     special_conditions: {} as JsonMap,
     additional_documents: {} as JsonMap,
-    air_monitoring: {} as JsonMap,      // 6x13 table: { [gas]: { [timeCol]: string } }
+    air_monitoring: {} as JsonMap,      // table: { [gas]: { [timeCol]: string } }
     instrument_info: {} as JsonMap,
     signatures: { issuer: '' } as JsonMap,
   });
 
-  // Next permit number (YY####), stored as integer like 260001
+  // Auto-generated permit number (e.g., 260001) shown and saved
   const [nextPermitNumber, setNextPermitNumber] = useState<number | null>(null);
 
-  // ---------- Auth gate (admin or permit_writer) ----------
+  // ---------- Auth gate ----------
   useEffect(() => {
     (async () => {
       const { data: auth } = await supabase.auth.getUser();
@@ -94,7 +92,7 @@ export default function NewPermit() {
     })();
   }, []);
 
-  // ---------- Initialize Air Monitoring (6x13 blank) ----------
+  // ---------- Initialize Air Monitoring (table) ----------
   useEffect(() => {
     setFormData(prev => {
       if (Object.keys(prev.air_monitoring ?? {}).length > 0) return prev;
@@ -168,27 +166,37 @@ export default function NewPermit() {
   const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
   const fmtTime = (d: Date) => d.toTimeString().slice(0, 5);
 
-  // ---------- Auto-calc Expiration (12 hours after Issued) ----------
+  // ---------- Auto "+12 hours" for Expires ----------
   useEffect(() => {
     const { date_issued, time_issued } = formData;
     if (!date_issued || !time_issued) return;
 
-    // local time calculation (simple & user-friendly)
     const start = new Date(`${date_issued}T${time_issued}`);
     if (isNaN(start.getTime())) return;
 
     const end = new Date(start.getTime() + 12 * 60 * 60 * 1000);
     setFormData(prev => ({
       ...prev,
-      date_expired: fmtDate(end),
-      time_expired: fmtTime(end),
+      date_expires: fmtDate(end),
+      time_expires: fmtTime(end),
     }));
   }, [formData.date_issued, formData.time_issued]);
 
-  // ---------- Compute Next Permit Number when year changes ----------
+  // ---------- Determine monitoring enable (Hot Work OR Confined Space) ----------
+  const monitoringEnabled = useMemo(() => {
+    const anySelected = (keys: string[]) => keys?.some(k => !!formData.permit_types[k]);
+    const hotWorkSelected = anySelected(PERMIT_TYPES?.HOT_WORK ?? []);
+    const confinedSelected =
+      anySelected(PERMIT_TYPES?.CONFINED_SPACE ?? []) ||
+      !!formData.permit_types?.PRCS ||
+      !!formData.permit_types?.NPRCS;
+    return hotWorkSelected || confinedSelected;
+  }, [formData.permit_types]);
+
+  // ---------- Compute next permit number within YY0000–YY9999 ----------
   const yearPrefix = useMemo(() => {
     const d = formData.date_issued ? new Date(formData.date_issued) : new Date();
-    return String(d.getFullYear() % 100).padStart(2, '0'); // '26'
+    return String(d.getFullYear() % 100).padStart(2, '0'); // e.g., '26'
   }, [formData.date_issued]);
 
   useEffect(() => {
@@ -205,7 +213,6 @@ export default function NewPermit() {
         .limit(1);
 
       if (error) {
-        // Fallback to first in series if query errors
         setNextPermitNumber(min + 1);
         return;
       }
@@ -228,7 +235,6 @@ export default function NewPermit() {
       const payload: any = {
         ...formData,
         created_by: userId,
-        // save computed number (integer like 260001)
         permit_number: nextPermitNumber ?? null,
       };
 
@@ -245,7 +251,6 @@ export default function NewPermit() {
         return;
       }
 
-      // Print minimal confirmation
       const w = window.open('', '_blank');
       if (!w) return;
 
@@ -256,7 +261,7 @@ export default function NewPermit() {
             <h1>Safe Work Permit #${data.permit_number ?? '-'}</h1>
             <table border="1" cellspacing="0" cellpadding="6" width="100%">
               <tr><th>Date Issued</th><td>${formData.date_issued || '-'}</td><th>Time Issued</th><td>${formData.time_issued || '-'}</td></tr>
-              <tr><th>Date Expired</th><td>${formData.date_expired || '-'}</td><th>Time Expired</th><td>${formData.time_expired || '-'}</td></tr>
+              <tr><th>Date Expires</th><td>${formData.date_expires || '-'}</td><th>Time Expires</th><td>${formData.time_expires || '-'}</td></tr>
               <tr><th>Facility</th><td>${formData.facility || '-'}</td><th>Location</th><td>${formData.location || '-'}</td></tr>
               <tr><th>Contractor</th><td colspan="3">${formData.contractor || '-'}</td></tr>
               <tr><th>Description of Work</th><td colspan="3">${formData.description_of_work || '-'}</td></tr>
@@ -273,7 +278,7 @@ export default function NewPermit() {
     }
   };
 
-  // ---------- UI (styled like your Inspection page; condensed header) ----------
+  // ---------- UI ----------
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-bold">Create New Safe Work Permit</h2>
@@ -285,14 +290,13 @@ export default function NewPermit() {
           <div className="text-2xl font-bold">
             {nextPermitNumber ?? `${yearPrefix}0001`}
           </div>
-          <div className="text-sm text-gray-600">Format: YY#### (auto-generated per year)</div>
         </div>
       </div>
 
-      {/* Permit Details (condensed grid) */}
+      {/* Permit Details (condensed) */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Permit Details</div>
-        <div className="p-3 grid md:grid-cols-3 gap-4">
+        <div className="p-3 grid md:grid-cols-4 gap-4">
           <div>
             <label className="font-medium">Date Issued</label>
             <input
@@ -314,28 +318,29 @@ export default function NewPermit() {
             />
           </div>
           <div>
-            <label className="font-medium">Date Expired (auto +12h)</label>
+            <label className="font-medium">Date Expires</label>
             <input
-              name="date_expired"
+              name="date_expires"
               type="date"
-              value={formData.date_expired}
+              value={formData.date_expires}
               onChange={handleText}
               className="mt-1 w-full border rounded px-2 py-1"
               readOnly
             />
           </div>
           <div>
-            <label className="font-medium">Time Expired (auto +12h)</label>
+            <label className="font-medium">Time Expires</label>
             <input
-              name="time_expired"
+              name="time_expires"
               type="time"
-              value={formData.time_expired}
+              value={formData.time_expires}
               onChange={handleText}
               className="mt-1 w-full border rounded px-2 py-1"
               readOnly
             />
           </div>
-          <div>
+
+          <div className="md:col-span-2">
             <label className="font-medium">Facility</label>
             <input
               name="facility"
@@ -344,7 +349,7 @@ export default function NewPermit() {
               className="mt-1 w-full border rounded px-2 py-1"
             />
           </div>
-          <div>
+          <div className="md:col-span-2">
             <label className="font-medium">Location</label>
             <input
               name="location"
@@ -353,7 +358,8 @@ export default function NewPermit() {
               className="mt-1 w-full border rounded px-2 py-1"
             />
           </div>
-          <div>
+
+          <div className="md:col-span-4">
             <label className="font-medium">Contractor</label>
             <input
               name="contractor"
@@ -362,7 +368,8 @@ export default function NewPermit() {
               className="mt-1 w-full border rounded px-2 py-1"
             />
           </div>
-          <div className="md:col-span-3">
+
+          <div className="md:col-span-4">
             <label className="font-medium">Description of Work</label>
             <textarea
               name="description_of_work"
@@ -375,69 +382,123 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Permit Types (PRCS/NPRCS merged into Confined Space; DNCS removed) */}
+      {/* Permit Types: Hot Work + Confined Space on top row; Vehicle Entry removed; DNCS removed */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Permit Types</div>
+
+        {/* Top row: HOT WORK & CONFINED SPACE side by side */}
         <div className="p-3 grid md:grid-cols-2 gap-4">
-          {Object.entries(PERMIT_TYPES)
-            .filter(([key]) => key !== 'PRCS' && key !== 'NPRCS' && key !== 'DNCS')
-            .map(([category, items]) => {
-              const isConfined = category === 'CONFINED_SPACE';
-              return (
-                <div key={category} className="border p-2 rounded">
-                  <div className="font-medium mb-2 flex items-center gap-4">
-                    <span>{category.replace(/_/g, ' ')}</span>
-                    {isConfined && (
-                      <span className="flex items-center gap-4 text-sm">
-                        <label className="flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            checked={!!formData.permit_types.PRCS}
-                            onChange={() => toggleSimple('permit_types', 'PRCS')}
-                          />
-                          PRCS
-                        </label>
-                        <label className="flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            checked={!!formData.permit_types.NPRCS}
-                            onChange={() => toggleSimple('permit_types', 'NPRCS')}
-                          />
-                          NPRCS
-                        </label>
-                      </span>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    {items.map((item) => {
-                      const checked = !!(formData.permit_types as JsonMap)[item];
-                      return (
-                        <label key={item} className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleSimple('permit_types', item)}
-                          />
-                          <span>{item}</span>
-                        </label>
-                      );
-                    })}
+          {/* HOT WORK */}
+          <div className="border p-2 rounded">
+            <div className="font-medium mb-2">Hot Work</div>
+            <div className="space-y-2">
+              {(PERMIT_TYPES?.HOT_WORK ?? []).map((item) => {
+                const checked = !!(formData.permit_types as JsonMap)[item];
+                return (
+                  <label key={item} className="flex items-center gap-2">
                     <input
-                      placeholder="Other (specify)"
-                      className="mt-2 w-full border rounded px-2 py-1"
-                      value={(formData.permit_types?.other_text as string) ?? ''}
-                      onChange={(e) => setNestedText('permit_types', 'other_text', e.target.value)}
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSimple('permit_types', item)}
                     />
-                  </div>
+                    <span>{item}</span>
+                  </label>
+                );
+              })}
+              <input
+                placeholder="Other (specify)"
+                className="mt-2 w-full border rounded px-2 py-1"
+                value={(formData.permit_types?.hotwork_other as string) ?? ''}
+                onChange={(e) => setNestedText('permit_types', 'hotwork_other', e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* CONFINED SPACE with PRCS/NPRCS inline */}
+          <div className="border p-2 rounded">
+            <div className="font-medium mb-2 flex items-center gap-4">
+              <span>Confined Space</span>
+              <label className="flex items-center gap-1 text-sm">
+                <input
+                  type="checkbox"
+                  checked={!!formData.permit_types.PRCS}
+                  onChange={() => toggleSimple('permit_types', 'PRCS')}
+                />
+                PRCS
+              </label>
+              <label className="flex items-center gap-1 text-sm">
+                <input
+                  type="checkbox"
+                  checked={!!formData.permit_types.NPRCS}
+                  onChange={() => toggleSimple('permit_types', 'NPRCS')}
+                />
+                NPRCS
+              </label>
+            </div>
+            <div className="space-y-2">
+              {(PERMIT_TYPES?.CONFINED_SPACE ?? []).map((item) => {
+                const checked = !!(formData.permit_types as JsonMap)[item];
+                return (
+                  <label key={item} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSimple('permit_types', item)}
+                    />
+                    <span>{item}</span>
+                  </label>
+                );
+              })}
+              <input
+                placeholder="Other (specify)"
+                className="mt-2 w-full border rounded px-2 py-1"
+                value={(formData.permit_types?.confined_other as string) ?? ''}
+                onChange={(e) => setNestedText('permit_types', 'confined_other', e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Remaining categories excluding VEHICLE_ENTRY, PRCS, NPRCS, DNCS, HOT_WORK, CONFINED_SPACE */}
+        <div className="px-3 pb-3 grid md:grid-cols-2 gap-4">
+          {Object.entries(PERMIT_TYPES)
+            .filter(([key]) =>
+              !['VEHICLE_ENTRY', 'PRCS', 'NPRCS', 'DNCS', 'HOT_WORK', 'CONFINED_SPACE'].includes(key)
+            )
+            .map(([category, items]) => (
+              <div key={category} className="border p-2 rounded">
+                <div className="font-medium mb-2">{category.replace(/_/g, ' ')}</div>
+                <div className="space-y-2">
+                  {items.map((item) => {
+                    const checked = !!(formData.permit_types as JsonMap)[item];
+                    return (
+                      <label key={item} className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleSimple('permit_types', item)}
+                        />
+                        <span>{item}</span>
+                      </label>
+                    );
+                  })}
+                  <input
+                    placeholder="Other (specify)"
+                    className="mt-2 w-full border rounded px-2 py-1"
+                    value={(formData.permit_types?.[`${category}_other`] as string) ?? ''}
+                    onChange={(e) =>
+                      setNestedText('permit_types', `${category}_other`, e.target.value)
+                    }
+                  />
                 </div>
-              );
-            })}
+              </div>
+            ))}
         </div>
       </div>
 
-      {/* Additional PPE */}
+      {/* Personal Protective Equipment (PPE) */}
       <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Additional PPE</div>
+        <div className="bg-kmGray px-3 py-2 font-semibold">Personal Protective Equipment (PPE)</div>
         <div className="p-3 grid md:grid-cols-2 gap-4">
           {Object.entries(ADDITIONAL_PPE).map(([category, items]) => (
             <div key={category} className="border p-2 rounded">
@@ -542,7 +603,9 @@ export default function NewPermit() {
             <input
               className="mt-1 w-full border rounded px-2 py-1"
               value={(formData.equipment_condition?.other_text as string) ?? ''}
-              onChange={(e) => setNestedText('equipment_condition', 'other_text', e.target.value)}
+              onChange={(e) =>
+                setNestedText('equipment_condition', 'other_text', e.target.value)
+              }
             />
           </div>
         </div>
@@ -650,41 +713,30 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Additional Documents */}
-      <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Additional Documents</div>
-        <div className="p-3 grid md:grid-cols-2 gap-4">
-          {ADDITIONAL_DOCUMENTS.map((item) => {
-            const checked = !!(formData.additional_documents as JsonMap)[item];
-            return (
-              <div key={item} className="border p-2 rounded">
-                <div className="font-medium mb-2">{item}</div>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleSimple('additional_documents', item)}
-                  />
-                  <span>Included</span>
-                </label>
-              </div>
-            );
-          })}
-          <div className="md:col-span-2">
-            <label className="font-medium">Other (specify)</label>
-            <input
-              className="mt-1 w-full border rounded px-2 py-1"
-              value={(formData.additional_documents?.other_text as string) ?? ''}
-              onChange={(e) => setNestedText('additional_documents', 'other_text', e.target.value)}
-            />
-          </div>
+      {/* Air Monitoring: Perform continuous air monitoring, record hourly */}
+      <div
+        className={[
+          'border rounded',
+          monitoringEnabled ? '' : 'opacity-60 pointer-events-none',
+        ].join(' ')}
+      >
+        <div className="bg-kmGray px-3 py-2 font-semibold">
+          Air Monitoring (Perform continuous air monitoring, record hourly)
         </div>
-      </div>
-
-      {/* Air Monitoring: 6 x 13 table */}
-      <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Air Monitoring (6 × 13)</div>
         <div className="p-3 overflow-x-auto">
+          {/* VOC N/A toggle */}
+          <div className="mb-2 text-sm flex items-center gap-4">
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={vocNA}
+                onChange={() => setVocNA(v => !v)}
+                disabled={!monitoringEnabled}
+              />
+              VOC N/A (disable VOC row)
+            </label>
+          </div>
+
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr>
@@ -695,30 +747,36 @@ export default function NewPermit() {
               </tr>
             </thead>
             <tbody>
-              {GAS_ROWS.map((gas) => (
-                <tr key={gas}>
-                  <td className="border px-2 py-1 font-medium">{gas}</td>
-                  {TIME_COLUMNS.map((col) => (
-                    <td key={col} className="border px-1 py-1">
-                      <input
-                        className="w-full border rounded px-1 py-0.5"
-                        value={formData.air_monitoring?.[gas]?.[col] ?? ''}
-                        onChange={(e) => setAirCell(gas, col, e.target.value)}
-                      />
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {GAS_ROWS.map((gas) => {
+                const rowDisabled = gas === 'VOC' && vocNA;
+                return (
+                  <tr key={gas} className={rowDisabled ? 'bg-gray-100' : ''}>
+                    <td className="border px-2 py-1 font-medium">{gas}</td>
+                    {TIME_COLUMNS.map((col) => (
+                      <td key={col} className="border px-1 py-1">
+                        <input
+                          className="w-full border rounded px-1 py-0.5"
+                          value={formData.air_monitoring?.[gas]?.[col] ?? ''}
+                          onChange={(e) => setAirCell(gas, col, e.target.value)}
+                          disabled={!monitoringEnabled || rowDisabled}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-          <div className="text-xs text-gray-600 mt-2">
-            Tip: Use the first column for LEL, O₂, H₂S, CO, VOC, and an “Other” row as needed.
-          </div>
         </div>
       </div>
 
-      {/* Instrument Info */}
-      <div className="border rounded">
+      {/* Instrument Info (also tied to monitoringEnabled) */}
+      <div
+        className={[
+          'border rounded',
+          monitoringEnabled ? '' : 'opacity-60 pointer-events-none',
+        ].join(' ')}
+      >
         <div className="bg-kmGray px-3 py-2 font-semibold">Instrument Info</div>
         <div className="p-3 grid md:grid-cols-2 gap-4">
           <div>
@@ -727,6 +785,7 @@ export default function NewPermit() {
               className="mt-1 w-full border rounded px-2 py-1"
               value={formData.instrument_info.make ?? ''}
               onChange={(e) => setNestedText('instrument_info', 'make', e.target.value)}
+              disabled={!monitoringEnabled}
             />
           </div>
           <div>
@@ -735,6 +794,7 @@ export default function NewPermit() {
               className="mt-1 w-full border rounded px-2 py-1"
               value={formData.instrument_info.model ?? ''}
               onChange={(e) => setNestedText('instrument_info', 'model', e.target.value)}
+              disabled={!monitoringEnabled}
             />
           </div>
           <div>
@@ -743,6 +803,7 @@ export default function NewPermit() {
               className="mt-1 w-full border rounded px-2 py-1"
               value={formData.instrument_info.serial ?? ''}
               onChange={(e) => setNestedText('instrument_info', 'serial', e.target.value)}
+              disabled={!monitoringEnabled}
             />
           </div>
           <div>
@@ -751,6 +812,7 @@ export default function NewPermit() {
               className="mt-1 w-full border rounded px-2 py-1"
               value={formData.instrument_info.calibration ?? ''}
               onChange={(e) => setNestedText('instrument_info', 'calibration', e.target.value)}
+              disabled={!monitoringEnabled}
             />
           </div>
         </div>
@@ -795,4 +857,3 @@ export default function NewPermit() {
     </div>
   );
 }
-``
