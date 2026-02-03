@@ -16,33 +16,148 @@ import {
 
 type JsonMap = Record<string, any>;
 
-const TIME_COLUMNS = [
-  'Initial',
-  '1hr',
-  '2hr',
-  '3hr',
-  '4hr',
-  '5hr',
-  '6hr',
-  '7hr',
-  '8hr',
-  '9hr',
-  '10hr',
-  '11hr',
-  '12hr',
-];
+// ---------------- Air Monitoring Columns ----------------
+const STATIC_COLS = ['Initial', '2nd Check'] as const;
+const DYNAMIC_TIME_COLS = 9; // number of "Time:" columns (editable headers)
 
-// Use gases exactly from constants (no "Other" row)
+// Use gases exactly from constants; we will show Safe Range for known gases.
 const GAS_ROWS = AIR_MONITORING_GASES.map(({ gas }) => gas);
+
+// Safe ranges
+const SAFE_RANGE: Record<string, string> = {
+  'LEL': '<10%',
+  'O₂': '19.5-23.5%',
+  'H₂S': '<10ppm',
+  'CO': '<35ppm',
+  'VOC': '—',
+};
+
+// ------------- PPE Render Transform (display labels & items) -------------
+type PPECategory = {
+  key: string;                // original key in ADDITIONAL_PPE for storage (e.g., 'HAND_FACE_RESPIRATORY')
+  label: string;              // display label (e.g., 'HEAD/FACE/RESPIRATORY')
+  items: string[];            // display item labels
+  postInputs?: Array<{
+    // conditional extra inputs that appear based on selected checkboxes
+    dependsOn: string[];      // item labels that trigger this input
+    key: string;              // storage key for the input
+    label: string;            // display label
+    placeholder?: string;
+  }>;
+};
+
+function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
+  // HEAD/FACE/RESPIRATORY from HAND_FACE_RESPIRATORY
+  const headOrig = additionalPpe.HAND_FACE_RESPIRATORY ?? [];
+  const headItems = headOrig
+    .map((it) => {
+      if (it.toLowerCase().includes('clamping')) return 'Cutting Goggles (Torch)';
+      if (it.toLowerCase() === 'full face*') return ''; // remove
+      if (it.toLowerCase() === 'hearing prot.') return 'Hearing Protection';
+      if (it.toLowerCase() === 'double hearing protect') return 'Double Hearing Protection';
+      if (it.toLowerCase() === 'half face*') return 'Half Face Respirator*';
+      return it;
+    })
+    .filter(Boolean);
+
+  // Add new respiratory items
+  headItems.push(
+    'Face Shield',
+    'Full Face Respirator*',
+    'Powered Air Purifying Respirator (PAPR)',
+    'Supplied Air or SCBA',
+    '5-Min Escape Pack'
+  );
+
+  // HAND category tweaks
+  const handOrig = additionalPpe.HAND ?? [];
+  const handItems = handOrig
+    .map((it) => {
+      if (it.toLowerCase() === 'impact gloves') return 'Impact Gloves';
+      if (it.toLowerCase().startsWith('chemical gloves')) return 'Chemical Gloves';
+      return it;
+    });
+
+  // BODY (from OTHER_PPE) with removes/relabels
+  const bodyOrig = additionalPpe.OTHER_PPE ?? [];
+  const bodyItems = bodyOrig
+    .map((it) => {
+      if (it.toLowerCase() === 'full body harness') return 'Fall Protection Harness & Lanyards';
+      if (it.toLowerCase() === 'smoldering ppes') return 'Rescue Lifeline';
+      if (it.toLowerCase() === 'fire retardant clothing') return 'Fire Retardant (FR) Clothing';
+      if (it.toLowerCase() === 'kmit two watch vest') return 'Chemical Suit';
+      return it;
+    })
+    .filter((it) => ![
+      'Material guards',
+      'H2S Monitor',
+      'Other PPE – Level A',
+      'Other PPE – Level B',
+      'Other PPE – Level C',
+    ].includes(it));
+
+  // OTHER SAFETY EQUIPMENT (from OTHER)
+  const otherEquipOrig = additionalPpe.OTHER ?? [];
+  const otherEquipItems = otherEquipOrig; // label only changes
+
+  const categories: PPECategory[] = [
+    {
+      key: 'HAND_FACE_RESPIRATORY',
+      label: 'HEAD/FACE/RESPIRATORY',
+      items: headItems,
+      postInputs: [
+        {
+          dependsOn: ['Half Face Respirator*', 'Full Face Respirator*'],
+          key: 'resp_cartridge_type',
+          label: '*Cartridge Type Required:',
+          placeholder: 'Enter cartridge type',
+        },
+      ]
+    },
+    {
+      key: 'HAND',
+      label: 'HAND',
+      items: handItems,
+      postInputs: [
+        {
+          dependsOn: ['Chemical Gloves'],
+          key: 'chem_gloves_type',
+          label: 'Type:',
+          placeholder: 'Enter chemical glove type',
+        }
+      ]
+    },
+    {
+      key: 'OTHER_PPE',
+      label: 'BODY',
+      items: bodyItems,
+    },
+    {
+      key: 'OTHER',
+      label: 'OTHER SAFETY EQUIPMENT',
+      items: otherEquipItems,
+    },
+  ];
+
+  return categories;
+}
 
 export default function NewPermit() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // UI toggle: VOC N/A disables that row
-  const [vocNA, setVocNA] = useState(false);
+  // VOC N/A default: true (row disabled unless unchecked)
+  const [vocNA, setVocNA] = useState<boolean>(true);
 
-  // Main state
+  // Energy Control N/A default: true (section disabled unless unchecked)
+  const [energyNA, setEnergyNA] = useState<boolean>(true);
+
+  // Dynamic header labels for the "Time:" columns
+  const [timeHeaders, setTimeHeaders] = useState<string[]>(
+    Array.from({ length: DYNAMIC_TIME_COLS }, () => '')
+  );
+
+  // Main form state
   const [formData, setFormData] = useState({
     facility: '',
     location: '',
@@ -60,15 +175,16 @@ export default function NewPermit() {
     energy_control: {} as JsonMap,
     special_conditions: {} as JsonMap,
     additional_documents: {} as JsonMap,
-    air_monitoring: {} as JsonMap,      // table: { [gas]: { [timeCol]: string } }
-    instrument_info: {} as JsonMap,
-    signatures: { issuer: '' } as JsonMap,
+    air_monitoring: {} as JsonMap,      // table: { [gas]: { Initial, second, t1..tN } }
+    air_monitoring_headers: {} as JsonMap, // { t1: '10:00', t2: '11:00', ... }
+    instrument_info: {} as JsonMap,     // { make, model, serial, bump_tested: boolean|null, calibration_current: boolean|null }
+    signatures: { issuer: '', receiver: '' } as JsonMap,
   });
 
-  // Auto-generated permit number (e.g., 260001) shown and saved
+  // Permit number (YY####) — integer like 260001
   const [nextPermitNumber, setNextPermitNumber] = useState<number | null>(null);
 
-  // ---------- Auth gate ----------
+  // ---------- Auth ----------
   useEffect(() => {
     (async () => {
       const { data: auth } = await supabase.auth.getUser();
@@ -92,20 +208,25 @@ export default function NewPermit() {
     })();
   }, []);
 
-  // ---------- Initialize Air Monitoring (table) ----------
+  // ---------- Init Air Monitoring grid ----------
   useEffect(() => {
     setFormData(prev => {
       if (Object.keys(prev.air_monitoring ?? {}).length > 0) return prev;
       const table: JsonMap = {};
       GAS_ROWS.forEach(gas => {
-        table[gas] = {};
-        TIME_COLUMNS.forEach(col => (table[gas][col] = ''));
+        table[gas] = { Initial: '', second: '' };
+        for (let i = 1; i <= DYNAMIC_TIME_COLS; i++) {
+          table[gas][`t${i}`] = '';
+        }
       });
-      return { ...prev, air_monitoring: table };
+      // init headers: { t1: '', t2: '', ... }
+      const headers: JsonMap = {};
+      for (let i = 1; i <= DYNAMIC_TIME_COLS; i++) headers[`t${i}`] = '';
+      return { ...prev, air_monitoring: table, air_monitoring_headers: headers };
     });
   }, []);
 
-  // ---------- Helpers ----------
+  // ---------- Simple helpers ----------
   const handleText = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -152,21 +273,35 @@ export default function NewPermit() {
     }));
   };
 
-  const setAirCell = (gas: string, col: string, value: string) => {
+  const setAirCell = (gas: string, colKey: string, value: string) => {
     setFormData(prev => ({
       ...prev,
       air_monitoring: {
         ...prev.air_monitoring,
-        [gas]: { ...(prev.air_monitoring?.[gas] ?? {}), [col]: value }
+        [gas]: { ...(prev.air_monitoring?.[gas] ?? {}), [colKey]: value }
       }
     }));
   };
 
-  // Format helpers
+  const setHeaderLabel = (idx: number, value: string) => {
+    setTimeHeaders(prev => {
+      const copy = [...prev];
+      copy[idx] = value;
+      return copy;
+    });
+    setFormData(prev => ({
+      ...prev,
+      air_monitoring_headers: {
+        ...prev.air_monitoring_headers,
+        [`t${idx + 1}`]: value
+      }
+    }));
+  };
+
+  // ---------- Auto "+12 hours" for Expires ----------
   const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
   const fmtTime = (d: Date) => d.toTimeString().slice(0, 5);
 
-  // ---------- Auto "+12 hours" for Expires ----------
   useEffect(() => {
     const { date_issued, time_issued } = formData;
     if (!date_issued || !time_issued) return;
@@ -182,7 +317,7 @@ export default function NewPermit() {
     }));
   }, [formData.date_issued, formData.time_issued]);
 
-  // ---------- Determine monitoring enable (Hot Work OR Confined Space) ----------
+  // ---------- Monitoring enabled if Hot Work OR Confined Space (incl. PRCS/NPRCS) ----------
   const monitoringEnabled = useMemo(() => {
     const anySelected = (keys: string[]) => keys?.some(k => !!formData.permit_types[k]);
     const hotWorkSelected = anySelected(PERMIT_TYPES?.HOT_WORK ?? []);
@@ -193,10 +328,10 @@ export default function NewPermit() {
     return hotWorkSelected || confinedSelected;
   }, [formData.permit_types]);
 
-  // ---------- Compute next permit number within YY0000–YY9999 ----------
+  // ---------- Permit number YY#### ----------
   const yearPrefix = useMemo(() => {
     const d = formData.date_issued ? new Date(formData.date_issued) : new Date();
-    return String(d.getFullYear() % 100).padStart(2, '0'); // e.g., '26'
+    return String(d.getFullYear() % 100).padStart(2, '0');
   }, [formData.date_issued]);
 
   useEffect(() => {
@@ -220,7 +355,7 @@ export default function NewPermit() {
       if (data && data.length > 0 && typeof data[0].permit_number === 'number') {
         setNextPermitNumber(data[0].permit_number + 1);
       } else {
-        setNextPermitNumber(min + 1); // YY0001
+        setNextPermitNumber(min + 1);
       }
     })();
   }, [yearPrefix]);
@@ -278,6 +413,9 @@ export default function NewPermit() {
     }
   };
 
+  // ---------- PPE transformed config ----------
+  const PPE_RENDER = useMemo(() => buildPPERender(ADDITIONAL_PPE), []);
+
   // ---------- UI ----------
   return (
     <div className="space-y-4">
@@ -293,7 +431,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Permit Details (condensed) */}
+      {/* Permit Details (condensed row for dates/times) */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Permit Details</div>
         <div className="p-3 grid md:grid-cols-4 gap-4">
@@ -382,7 +520,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Permit Types: Hot Work + Confined Space on top row; Vehicle Entry removed; DNCS removed */}
+      {/* Permit Types (top row: Hot Work + Confined Space) */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Permit Types</div>
 
@@ -496,54 +634,64 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Personal Protective Equipment (PPE) */}
+      {/* PPE (renamed & transformed) */}
       <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Personal Protective Equipment (PPE)</div>
+        <div className="bg-kmGray px-3 py-2 font-semibold">
+          Personal Protective Equipment (Minimum PPE Requirements: Hard Hat, Safety Glasses, Gloves, Safety Toe Footwear, and Reflective Vest)
+        </div>
         <div className="p-3 grid md:grid-cols-2 gap-4">
-          {Object.entries(ADDITIONAL_PPE).map(([category, items]) => (
-            <div key={category} className="border p-2 rounded">
-              <div className="font-medium mb-2">{category.replace(/_/g, ' ')}</div>
-              <div className="space-y-2">
-                {items.map((item) => {
-                  const catObj = (formData.additional_ppe as JsonMap)[category] ?? {};
-                  const checked = !!catObj[item];
-                  return (
+          {PPE_RENDER.map(({ key, label, items, postInputs }) => {
+            const catObj = (formData.additional_ppe as JsonMap)[key] ?? {};
+            const isSelected = (name: string) => !!catObj[name];
+
+            return (
+              <div key={key} className="border p-2 rounded">
+                <div className="font-medium mb-2">{label}</div>
+                <div className="space-y-2">
+                  {items.map((item) => (
                     <label key={item} className="flex items-center gap-2">
                       <input
                         type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleNested('additional_ppe', category, item)}
+                        checked={isSelected(item)}
+                        onChange={() => toggleNested('additional_ppe', key, item)}
                       />
                       <span>{item}</span>
                     </label>
-                  );
-                })}
-                <input
-                  placeholder="Other (specify)"
-                  className="mt-2 w-full border rounded px-2 py-1"
-                  value={
-                    ((formData.additional_ppe as JsonMap)[category]?.other_text as string) ?? ''
-                  }
-                  onChange={(e) =>
-                    setFormData(prev => {
-                      const sec = (prev.additional_ppe as JsonMap) ?? {};
-                      const cat = sec[category] ?? {};
-                      return {
-                        ...prev,
-                        additional_ppe: {
-                          ...sec,
-                          [category]: {
-                            ...cat,
-                            other_text: e.target.value
-                          }
-                        }
-                      };
-                    })
-                  }
-                />
+                  ))}
+
+                  {/* Conditional extra inputs */}
+                  {postInputs?.map((pi) => {
+                    const show = pi.dependsOn.some(isSelected);
+                    if (!show) return null;
+                    return (
+                      <div key={pi.key} className="mt-2">
+                        <label className="font-medium">{pi.label}</label>
+                        <input
+                          className="mt-1 w-full border rounded px-2 py-1"
+                          placeholder={pi.placeholder ?? ''}
+                          value={(catObj?.[pi.key] as string) ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFormData(prev => {
+                              const sec = (prev.additional_ppe as JsonMap) ?? {};
+                              const origCat = sec[key] ?? {};
+                              return {
+                                ...prev,
+                                additional_ppe: {
+                                  ...sec,
+                                  [key]: { ...origCat, [pi.key]: val }
+                                }
+                              };
+                            });
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -611,9 +759,24 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Energy Control */}
-      <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Energy Control</div>
+      {/* Energy Control (default N/A -> disabled) */}
+      <div
+        className={[
+          'border rounded',
+          energyNA ? 'opacity-60 pointer-events-none' : ''
+        ].join(' ')}
+      >
+        <div className="bg-kmGray px-3 py-2 font-semibold flex items-center justify-between">
+          <span>Energy Control</span>
+          <label className="text-sm flex items-center gap-2 pr-2 pointer-events-auto">
+            <input
+              type="checkbox"
+              checked={energyNA}
+              onChange={() => setEnergyNA(v => !v)}
+            />
+            N/A
+          </label>
+        </div>
         <div className="p-3 grid md:grid-cols-3 gap-4">
           <div className="border p-2 rounded">
             <div className="font-medium mb-2">Verified lockout/tagout</div>
@@ -622,6 +785,7 @@ export default function NewPermit() {
                 type="checkbox"
                 checked={!!formData.energy_control.lockout_verified}
                 onChange={() => toggleSimple('energy_control', 'lockout_verified')}
+                disabled={energyNA}
               />
               <span>Yes</span>
             </label>
@@ -634,6 +798,7 @@ export default function NewPermit() {
               onChange={(e) =>
                 setNestedText('energy_control', 'lock_box_number', e.target.value)
               }
+              disabled={energyNA}
             />
           </div>
         </div>
@@ -713,7 +878,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Air Monitoring: Perform continuous air monitoring, record hourly */}
+      {/* Air Monitoring (Perform continuous air monitoring, record hourly) */}
       <div
         className={[
           'border rounded',
@@ -724,7 +889,7 @@ export default function NewPermit() {
           Air Monitoring (Perform continuous air monitoring, record hourly)
         </div>
         <div className="p-3 overflow-x-auto">
-          {/* VOC N/A toggle */}
+          {/* VOC N/A: default checked; disables VOC row even when section enabled */}
           <div className="mb-2 text-sm flex items-center gap-4">
             <label className="flex items-center gap-1">
               <input
@@ -741,8 +906,21 @@ export default function NewPermit() {
             <thead>
               <tr>
                 <th className="border px-2 py-1 text-left">Gas</th>
-                {TIME_COLUMNS.map((t) => (
-                  <th key={t} className="border px-2 py-1 text-left">{t}</th>
+                <th className="border px-2 py-1 text-left">Safe Range</th>
+                <th className="border px-2 py-1 text-left">{STATIC_COLS[0]}</th>
+                <th className="border px-2 py-1 text-left">{STATIC_COLS[1]}</th>
+                {Array.from({ length: DYNAMIC_TIME_COLS }).map((_, idx) => (
+                  <th key={`h-${idx}`} className="border px-2 py-1 text-left">
+                    <div className="flex items-center gap-2">
+                      <span>Time:</span>
+                      <input
+                        className="w-24 border rounded px-1 py-0.5"
+                        value={timeHeaders[idx] ?? ''}
+                        onChange={(e) => setHeaderLabel(idx, e.target.value)}
+                        disabled={!monitoringEnabled}
+                      />
+                    </div>
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -752,16 +930,39 @@ export default function NewPermit() {
                 return (
                   <tr key={gas} className={rowDisabled ? 'bg-gray-100' : ''}>
                     <td className="border px-2 py-1 font-medium">{gas}</td>
-                    {TIME_COLUMNS.map((col) => (
-                      <td key={col} className="border px-1 py-1">
-                        <input
-                          className="w-full border rounded px-1 py-0.5"
-                          value={formData.air_monitoring?.[gas]?.[col] ?? ''}
-                          onChange={(e) => setAirCell(gas, col, e.target.value)}
-                          disabled={!monitoringEnabled || rowDisabled}
-                        />
-                      </td>
-                    ))}
+                    <td className="border px-2 py-1 text-gray-700">{SAFE_RANGE[gas] ?? '—'}</td>
+                    {/* Initial */}
+                    <td className="border px-1 py-1">
+                      <input
+                        className="w-full border rounded px-1 py-0.5"
+                        value={formData.air_monitoring?.[gas]?.['Initial'] ?? ''}
+                        onChange={(e) => setAirCell(gas, 'Initial', e.target.value)}
+                        disabled={!monitoringEnabled || rowDisabled}
+                      />
+                    </td>
+                    {/* 2nd Check */}
+                    <td className="border px-1 py-1">
+                      <input
+                        className="w-full border rounded px-1 py-0.5"
+                        value={formData.air_monitoring?.[gas]?.['second'] ?? ''}
+                        onChange={(e) => setAirCell(gas, 'second', e.target.value)}
+                        disabled={!monitoringEnabled || rowDisabled}
+                      />
+                    </td>
+                    {/* Dynamic Time columns (t1..tN) */}
+                    {Array.from({ length: DYNAMIC_TIME_COLS }).map((_, idx) => {
+                      const key = `t${idx + 1}`;
+                      return (
+                        <td key={key} className="border px-1 py-1">
+                          <input
+                            className="w-full border rounded px-1 py-0.5"
+                            value={formData.air_monitoring?.[gas]?.[key] ?? ''}
+                            onChange={(e) => setAirCell(gas, key, e.target.value)}
+                            disabled={!monitoringEnabled || rowDisabled}
+                          />
+                        </td>
+                      );
+                    })}
                   </tr>
                 );
               })}
@@ -770,7 +971,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Instrument Info (also tied to monitoringEnabled) */}
+      {/* Instrument Info (tied to monitoringEnabled) */}
       <div
         className={[
           'border rounded',
@@ -806,14 +1007,59 @@ export default function NewPermit() {
               disabled={!monitoringEnabled}
             />
           </div>
-          <div>
-            <label className="font-medium">Last Calibration Date</label>
-            <input
-              className="mt-1 w-full border rounded px-2 py-1"
-              value={formData.instrument_info.calibration ?? ''}
-              onChange={(e) => setNestedText('instrument_info', 'calibration', e.target.value)}
-              disabled={!monitoringEnabled}
-            />
+
+          {/* Bump Tested Before Use: Yes/No (mutually exclusive checkboxes) */}
+          <div className="flex items-center gap-6">
+            <span className="font-medium">Bump Tested Before Use:</span>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={formData.instrument_info.bump_tested === true}
+                onChange={() =>
+                  setNestedText('instrument_info', 'bump_tested', true)
+                }
+                disabled={!monitoringEnabled}
+              />
+              Yes
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={formData.instrument_info.bump_tested === false}
+                onChange={() =>
+                  setNestedText('instrument_info', 'bump_tested', false)
+                }
+                disabled={!monitoringEnabled}
+              />
+              No
+            </label>
+          </div>
+
+          {/* Calibration Current: Yes/No */}
+          <div className="flex items-center gap-6">
+            <span className="font-medium">Calibration Current:</span>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={formData.instrument_info.calibration_current === true}
+                onChange={() =>
+                  setNestedText('instrument_info', 'calibration_current', true)
+                }
+                disabled={!monitoringEnabled}
+              />
+              Yes
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="checkbox"
+                checked={formData.instrument_info.calibration_current === false}
+                onChange={() =>
+                  setNestedText('instrument_info', 'calibration_current', false)
+                }
+                disabled={!monitoringEnabled}
+              />
+              No
+            </label>
           </div>
         </div>
       </div>
@@ -821,20 +1067,35 @@ export default function NewPermit() {
       {/* Signatures */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Signatures</div>
-        <div className="p-3">
-          <label className="font-medium">Permit Issuer</label>
-          <input
-            name="issuer"
-            placeholder="Permit Issuer"
-            className="mt-1 w-full border rounded px-2 py-1"
-            value={formData.signatures.issuer}
-            onChange={(e) =>
-              setFormData(prev => ({
-                ...prev,
-                signatures: { ...(prev.signatures ?? {}), issuer: e.target.value }
-              }))
-            }
-          />
+        <div className="p-3 grid md:grid-cols-2 gap-4">
+          <div>
+            <label className="font-medium">Permit Issuer</label>
+            <input
+              name="issuer"
+              className="mt-1 w-full border rounded px-2 py-1"
+              value={formData.signatures.issuer}
+              onChange={(e) =>
+                setFormData(prev => ({
+                  ...prev,
+                  signatures: { ...(prev.signatures ?? {}), issuer: e.target.value }
+                }))
+              }
+            />
+          </div>
+          <div>
+            <label className="font-medium">Permit Receiver</label>
+            <input
+              name="receiver"
+              className="mt-1 w-full border rounded px-2 py-1"
+              value={formData.signatures.receiver}
+              onChange={(e) =>
+                setFormData(prev => ({
+                  ...prev,
+                  signatures: { ...(prev.signatures ?? {}), receiver: e.target.value }
+                }))
+              }
+            />
+          </div>
         </div>
       </div>
 
