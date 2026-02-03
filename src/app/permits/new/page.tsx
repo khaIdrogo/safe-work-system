@@ -7,7 +7,6 @@ import {
   ADDITIONAL_PPE,
   HAZARD_REDUCTION_ITEMS,
   EQUIPMENT_CONDITION_ITEMS,
-  SPECIAL_CONDITIONS_HEADER,
   SPECIAL_CONDITION_REQUIREMENTS_LEFT,
   SPECIAL_CONDITION_REQUIREMENTS_RIGHT,
   ADDITIONAL_DOCUMENTS,
@@ -16,11 +15,10 @@ import {
 
 type JsonMap = Record<string, any>;
 
-// ---------------- Air Monitoring Columns ----------------
-// One static column "Initial", then dynamic "Time:" headers (small text boxes)
+// ---------------- Air Monitoring ----------------
 const DYNAMIC_TIME_COLS = 9; // editable time headers (t1..t9)
 
-// Use gases exactly from constants
+// Gases from constants
 const GAS_ROWS = AIR_MONITORING_GASES.map(({ gas }) => gas);
 
 // Safe ranges
@@ -32,7 +30,7 @@ const SAFE_RANGE: Record<string, string> = {
   'VOC': '—',
 };
 
-// Build modified HOT WORK list per spec
+// ---------------- Permit Types transforms ----------------
 function transformHotWork(items: string[]): string[] {
   const removed = new Set([
     'Use of electric power tools',
@@ -50,7 +48,6 @@ function transformHotWork(items: string[]): string[] {
     });
 }
 
-// Build modified CONFINED SPACE list per spec
 function transformConfinedSpace(items: string[]): string[] {
   const removed = new Set([
     'Entry after cooling off',
@@ -60,7 +57,6 @@ function transformConfinedSpace(items: string[]): string[] {
   return items.filter((it) => !removed.has(it));
 }
 
-// Replace GENERAL WORK entirely per spec
 const GENERAL_WORK_REPLACED = [
   'Install equipment/materials',
   'Inspect/troubleshoot/test',
@@ -74,11 +70,11 @@ const GENERAL_WORK_REPLACED = [
   'Use of heavy equipment',
 ];
 
-// ------------- PPE Render Transform (display labels & items) -------------
+// ---------------- PPE rendering transform ----------------
 type PPECategory = {
-  key: string;                // original key in ADDITIONAL_PPE for storage
-  label: string;              // display label
-  items: string[];            // display item labels
+  key: string;    // original key to store under additional_ppe JSON
+  label: string;  // display label
+  items: string[];
   postInputs?: Array<{
     dependsOn: string[];
     key: string;
@@ -102,7 +98,6 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
     })
     .filter(Boolean) as string[];
 
-  // Add new respiratory items
   headItems.push(
     'Face Shield',
     'Full Face Respirator*',
@@ -111,7 +106,7 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
     '5-Min Escape Pack'
   );
 
-  // HAND adjustments
+  // HAND
   const handOrig = additionalPpe.HAND ?? [];
   const handItems = handOrig.map((it) => {
     const low = it.toLowerCase();
@@ -120,7 +115,7 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
     return it;
   });
 
-  // BODY (from OTHER_PPE) with removals/renames
+  // BODY from OTHER_PPE with mapping/removals applied earlier
   const bodyOrig = additionalPpe.OTHER_PPE ?? [];
   const bodyItems = bodyOrig
     .map((it) => {
@@ -139,11 +134,26 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
       'Other PPE – Level C',
     ].includes(it));
 
-  // OTHER SAFETY EQUIPMENT (from OTHER; label only changes)
-  const otherEquipOrig = additionalPpe.OTHER ?? [];
-  const otherEquipItems = otherEquipOrig;
+  // OTHER SAFETY EQUIPMENT (from OTHER) with new filtering/remap
+  const otherOrig = additionalPpe.OTHER ?? [];
+  const otherItems = otherOrig
+    .map((it) => {
+      if (it === 'Intentionally Split equip / 12 volt lighting') {
+        return 'Intrinsically Safe Equipment';
+      }
+      return it;
+    })
+    .filter((it) => ![
+      'Descent Device',
+      'X Ray barricades',
+      'X-Ray barricades',
+      'Rail Switch Locks',
+      'Blue Flag / Derailer',
+      'Other',
+      'Other Special PPE',
+    ].includes(it));
 
-  const categories: PPECategory[] = [
+  return [
     {
       key: 'HAND_FACE_RESPIRATORY',
       label: 'HEAD/FACE/RESPIRATORY',
@@ -178,11 +188,9 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
     {
       key: 'OTHER',
       label: 'OTHER SAFETY EQUIPMENT',
-      items: otherEquipItems,
+      items: otherItems,
     },
   ];
-
-  return categories;
 }
 
 export default function NewPermit() {
@@ -201,15 +209,18 @@ export default function NewPermit() {
   );
 
   // Build current date/time defaults (local)
-  const now = useMemo(() => new Date(), []);
-  const defaultDate = useMemo(() => {
-    const d = new Date();
-    return d.toISOString().slice(0, 10);
-  }, []);
-  const defaultTime = useMemo(() => {
-    const d = new Date();
-    return d.toTimeString().slice(0, 5);
-  }, []);
+  const defaultDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const defaultTime = useMemo(() => new Date().toTimeString().slice(0, 5), []);
+
+  // Compute min time for "Time Issued"
+  const minTimeForDate = (dateStr: string): string => {
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    if (dateStr === todayStr) {
+      return today.toTimeString().slice(0, 5);
+    }
+    return '00:00';
+    };
 
   // Main form state
   const [formData, setFormData] = useState({
@@ -224,8 +235,9 @@ export default function NewPermit() {
     permit_types: {} as JsonMap,        // includes PRCS/NPRCS flags next to CONFINED SPACE
     ppe_requirements: {} as JsonMap,
     additional_ppe: {} as JsonMap,
-    hazard_reduction: {} as JsonMap,
-    equipment_condition: {} as JsonMap,
+    // Combined section will still save into two JSON fields below:
+    hazard_reduction: {} as JsonMap,     // { item: { yes: boolean, na: boolean } }
+    equipment_condition: {} as JsonMap,  // { item: { yes: boolean, na: boolean } }
     energy_control: {} as JsonMap,
     special_conditions: {} as JsonMap,
     additional_documents: {} as JsonMap,
@@ -286,6 +298,28 @@ export default function NewPermit() {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
+  const handleDateIssued = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setFormData(prev => {
+      // if switching to today, ensure time_issued >= now
+      const minTime = minTimeForDate(value);
+      let timeIssued = prev.time_issued;
+      if (value === defaultDate && timeIssued < minTime) {
+        timeIssued = minTime;
+      }
+      return { ...prev, date_issued: value, time_issued: timeIssued };
+    });
+  };
+
+  const handleTimeIssued = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setFormData(prev => {
+      const minTime = minTimeForDate(prev.date_issued);
+      const coerced = value < minTime ? minTime : value;
+      return { ...prev, time_issued: coerced };
+    });
+  };
+
   const toggleSimple = (section: keyof typeof formData, key: string) => {
     setFormData(prev => ({
       ...prev,
@@ -317,7 +351,6 @@ export default function NewPermit() {
     });
   };
 
-  // Accept string | boolean so we can store booleans for instrument flags
   const setNestedText = (section: keyof typeof formData, key: string, value: string | boolean) => {
     setFormData(prev => ({
       ...prev,
@@ -372,7 +405,7 @@ export default function NewPermit() {
     }));
   }, [formData.date_issued, formData.time_issued]);
 
-  // ---------- Monitoring enabled if Hot Work OR CONFINED SPACE (incl. PRCS/NPRCS) ----------
+  // ---------- Monitoring enabled if HOT WORK OR CONFINED SPACE (incl. PRCS/NPRCS) ----------
   const monitoringEnabled = useMemo(() => {
     const anySelected = (keys: string[]) => keys?.some(k => !!formData.permit_types[k]);
     const hotWorkSelected = anySelected(transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []));
@@ -415,12 +448,12 @@ export default function NewPermit() {
     })();
   }, [yearPrefix]);
 
-  // ---------- Submit (with back-dating validation) ----------
+  // ---------- Submit (with back-dating validation on date+time) ----------
   const handleSubmit = async () => {
     try {
       if (!userId) return alert('Not signed in');
 
-      // Back-date validation
+      // Back-date validation: disallow any issued time before now if date is today
       const issued = new Date(`${formData.date_issued}T${formData.time_issued}`);
       const nowLocal = new Date();
       if (isNaN(issued.getTime()) || issued.getTime() < nowLocal.getTime()) {
@@ -479,7 +512,33 @@ export default function NewPermit() {
   // ---------- PPE transformed config ----------
   const PPE_RENDER = useMemo(() => buildPPERender(ADDITIONAL_PPE), []);
 
+  // ---------- Combined Hazard + Equipment (Yes/N/A per item) ----------
+  const setYesNA = (
+    section: 'hazard_reduction' | 'equipment_condition',
+    item: string,
+    field: 'yes' | 'na',
+    value: boolean
+  ) => {
+    setFormData(prev => {
+      const sec = (prev[section] as JsonMap) ?? {};
+      const cur = (sec[item] as JsonMap) ?? { yes: false, na: false };
+      const next = { ...cur, [field]: value };
+      // mutual exclusivity
+      if (field === 'yes' && value) next.na = false;
+      if (field === 'na' && value) next.yes = false;
+      return { ...prev, [section]: { ...sec, [item]: next } };
+    });
+  };
+
+  // helper boolean getters
+  const getYes = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
+    !!(formData[section]?.[item]?.yes);
+  const getNA = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
+    !!(formData[section]?.[item]?.na);
+
   // ---------- UI ----------
+  const minTime = minTimeForDate(formData.date_issued);
+
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-bold">Create New Safe Work Permit</h2>
@@ -494,7 +553,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Permit Details (condensed row for dates/times) */}
+      {/* Permit Details */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Permit Details</div>
         <div className="p-3 grid md:grid-cols-4 gap-4">
@@ -505,7 +564,7 @@ export default function NewPermit() {
               type="date"
               value={formData.date_issued}
               min={defaultDate}
-              onChange={handleText}
+              onChange={handleDateIssued}
               className="mt-1 w-full border rounded px-2 py-1"
             />
           </div>
@@ -515,7 +574,8 @@ export default function NewPermit() {
               name="time_issued"
               type="time"
               value={formData.time_issued}
-              onChange={handleText}
+              min={minTime}
+              onChange={handleTimeIssued}
               className="mt-1 w-full border rounded px-2 py-1"
             />
           </div>
@@ -590,9 +650,9 @@ export default function NewPermit() {
 
         {/* Top row: HOT WORK & CONFINED SPACE side by side */}
         <div className="p-3 grid md:grid-cols-2 gap-4">
-          {/* HOT WORK (transformed) */}
+          {/* HOT WORK */}
           <div className="border p-2 rounded">
-            <div className="font-medium mb-2">Hot Work</div>
+            <div className="font-medium mb-2">HOT WORK</div>
             <div className="space-y-2">
               {transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []).map((item) => {
                 const checked = !!(formData.permit_types as JsonMap)[item];
@@ -699,7 +759,7 @@ export default function NewPermit() {
             </div>
           </div>
 
-          {/* Other remaining categories, excluding unwanted ones */}
+          {/* Other remaining categories */}
           {Object.entries(PERMIT_TYPES)
             .filter(([key]) =>
               !['VEHICLE_ENTRY', 'PRCS', 'NPRCS', 'DNCS', 'HOT_WORK', 'CONFINED_SPACE', 'GENERAL_WORK'].includes(key)
@@ -741,7 +801,7 @@ export default function NewPermit() {
           Personal Protective Equipment (Minimum PPE Requirements: Hard Hat, Safety Glasses, Gloves, Safety Toe Footwear, and Reflective Vest)
         </div>
         <div className="p-3 grid md:grid-cols-2 gap-4">
-          {useMemo(() => buildPPERender(ADDITIONAL_PPE), []).map(({ key, label, items, postInputs }) => {
+          {PPE_RENDER.map(({ key, label, items, postInputs }) => {
             const catObj = (formData.additional_ppe as JsonMap)[key] ?? {};
             const isSelected = (name: string) => !!catObj[name];
 
@@ -796,67 +856,99 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Hazard Reduction */}
+      {/* Combined: Hazard Reduction + Equipment Condition */}
       <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Hazard Reduction</div>
-        <div className="p-3 grid md:grid-cols-2 gap-4">
-          {HAZARD_REDUCTION_ITEMS.map((item) => {
-            const checked = !!(formData.hazard_reduction as JsonMap)[item];
-            return (
-              <div key={item} className="border p-2 rounded">
-                <div className="font-medium mb-2">{item}</div>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleSimple('hazard_reduction', item)}
-                  />
-                  <span>Yes</span>
-                </label>
-              </div>
-            );
-          })}
-          <div className="md:col-span-2">
-            <label className="font-medium">Other (specify)</label>
-            <input
-              className="mt-1 w-full border rounded px-2 py-1"
-              value={(formData.hazard_reduction?.other_text as string) ?? ''}
-              onChange={(e) => setNestedText('hazard_reduction', 'other_text', e.target.value)}
-            />
-          </div>
-        </div>
-      </div>
+        <div className="bg-kmGray px-3 py-2 font-semibold">Hazard Reduction & Equipment Condition</div>
+        <div className="p-3 grid md:grid-cols-2 gap-6">
 
-      {/* Equipment Condition */}
-      <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Equipment Condition</div>
-        <div className="p-3 grid md:grid-cols-2 gap-4">
-          {EQUIPMENT_CONDITION_ITEMS.map((item) => {
-            const checked = !!(formData.equipment_condition as JsonMap)[item];
-            return (
-              <div key={item} className="border p-2 rounded">
-                <div className="font-medium mb-2">{item}</div>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleSimple('equipment_condition', item)}
-                  />
-                  <span>Yes</span>
-                </label>
-              </div>
-            );
-          })}
-          <div className="md:col-span-2">
-            <label className="font-medium">Other (specify)</label>
-            <input
-              className="mt-1 w-full border rounded px-2 py-1"
-              value={(formData.equipment_condition?.other_text as string) ?? ''}
-              onChange={(e) =>
-                setNestedText('equipment_condition', 'other_text', e.target.value)
-              }
-            />
+          {/* Hazard Reduction side */}
+          <div>
+            <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
+              <div>Hazard Reduction</div>
+              <div className="text-center">Yes</div>
+              <div className="text-center">N/A</div>
+            </div>
+            <div className="space-y-1">
+              {HAZARD_REDUCTION_ITEMS.map((item) => {
+                const isOther = item.toLowerCase().startsWith('other');
+                return (
+                  <div key={item} className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1">
+                    <div className="text-sm">{item}</div>
+                    <div className="flex justify-center">
+                      <input
+                        type="checkbox"
+                        checked={getYes('hazard_reduction', item)}
+                        onChange={(e) => setYesNA('hazard_reduction', item, 'yes', e.target.checked)}
+                      />
+                    </div>
+                    <div className="flex justify-center">
+                      <input
+                        type="checkbox"
+                        checked={getNA('hazard_reduction', item)}
+                        onChange={(e) => setYesNA('hazard_reduction', item, 'na', e.target.checked)}
+                      />
+                    </div>
+                    {/* Conditional "Other (specify)" appears only if "Other" Yes is selected */}
+                    {isOther && getYes('hazard_reduction', item) && (
+                      <div className="col-span-3 mt-1">
+                        <label className="text-sm font-medium">Other (specify)</label>
+                        <input
+                          className="mt-1 w-full border rounded px-2 py-1"
+                          value={(formData.hazard_reduction?.other_text as string) ?? ''}
+                          onChange={(e) => setNestedText('hazard_reduction', 'other_text', e.target.value)}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
+
+          {/* Equipment Condition side */}
+          <div>
+            <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
+              <div>Equipment Condition</div>
+              <div className="text-center">Yes</div>
+              <div className="text-center">N/A</div>
+            </div>
+            <div className="space-y-1">
+              {EQUIPMENT_CONDITION_ITEMS.map((item) => {
+                const isOther = item.toLowerCase().startsWith('other');
+                return (
+                  <div key={item} className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1">
+                    <div className="text-sm">{item}</div>
+                    <div className="flex justify-center">
+                      <input
+                        type="checkbox"
+                        checked={getYes('equipment_condition', item)}
+                        onChange={(e) => setYesNA('equipment_condition', item, 'yes', e.target.checked)}
+                      />
+                    </div>
+                    <div className="flex justify-center">
+                      <input
+                        type="checkbox"
+                        checked={getNA('equipment_condition', item)}
+                        onChange={(e) => setYesNA('equipment_condition', item, 'na', e.target.checked)}
+                      />
+                    </div>
+                    {/* Conditional "Other (specify)" shows only if "Other" Yes is clicked */}
+                    {isOther && getYes('equipment_condition', item) && (
+                      <div className="col-span-3 mt-1">
+                        <label className="text-sm font-medium">Other (specify)</label>
+                        <input
+                          className="mt-1 w-full border rounded px-2 py-1"
+                          value={(formData.equipment_condition?.other_text as string) ?? ''}
+                          onChange={(e) => setNestedText('equipment_condition', 'other_text', e.target.value)}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -905,30 +997,10 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Special Conditions */}
+      {/* Special Conditions (Header removed) */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Special Conditions</div>
-        <div className="p-3 grid md:grid-cols-3 gap-4">
-          <div className="border p-2 rounded">
-            <div className="font-medium mb-2">Header</div>
-            <div className="space-y-2">
-              {SPECIAL_CONDITIONS_HEADER.map((item) => {
-                const group = (formData.special_conditions as JsonMap)['HEADER'] ?? {};
-                const checked = !!group[item];
-                return (
-                  <label key={item} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleNested('special_conditions', 'HEADER', item)}
-                    />
-                    <span>{item}</span>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-
+        <div className="p-3 grid md:grid-cols-2 gap-4">
           <div className="border p-2 rounded">
             <div className="font-medium mb-2">Requirements (Left)</div>
             <div className="space-y-2">
@@ -1062,7 +1134,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Instrument Info (condensed) */}
+      {/* Instrument Info (condensed rows) */}
       <div
         className={[
           'border rounded',
@@ -1205,3 +1277,4 @@ export default function NewPermit() {
     </div>
   );
 }
+``
