@@ -17,10 +17,10 @@ import {
 type JsonMap = Record<string, any>;
 
 // ---------------- Air Monitoring Columns ----------------
-const STATIC_COLS = ['Initial', '2nd Check'] as const;
-const DYNAMIC_TIME_COLS = 9; // number of "Time:" columns (editable headers)
+// One static column "Initial", then dynamic "Time:" headers (small text boxes)
+const DYNAMIC_TIME_COLS = 9; // editable time headers (t1..t9)
 
-// Use gases exactly from constants; we will show Safe Range for known gases.
+// Use gases exactly from constants
 const GAS_ROWS = AIR_MONITORING_GASES.map(({ gas }) => gas);
 
 // Safe ranges
@@ -32,16 +32,57 @@ const SAFE_RANGE: Record<string, string> = {
   'VOC': '—',
 };
 
+// Build modified HOT WORK list per spec
+function transformHotWork(items: string[]): string[] {
+  const removed = new Set([
+    'Use of electric power tools',
+    'Hot tar activities',
+    'In-situ care maintenance activities (Mow-Edge Weed eat)',
+    'Electrical work that could result in arc/spark',
+    'Use of low volt tools/equip',
+  ]);
+  return items
+    .filter((it) => !removed.has(it))
+    .map((it) => {
+      if (it === 'Burning/Welding/Cutting') return 'Burning/Welding';
+      if (it === 'Grinding/Chopping (Grinding)') return 'Grinding/Cutting';
+      return it;
+    });
+}
+
+// Build modified CONFINED SPACE list per spec
+function transformConfinedSpace(items: string[]): string[] {
+  const removed = new Set([
+    'Entry after cooling off',
+    'Switching building entries',
+    'Breaking lines connections blow-up work',
+  ]);
+  return items.filter((it) => !removed.has(it));
+}
+
+// Replace GENERAL WORK entirely per spec
+const GENERAL_WORK_REPLACED = [
+  'Install equipment/materials',
+  'Inspect/troubleshoot/test',
+  'Run conduit/wire/pipe/tubing',
+  'Use of hand tools',
+  'Use of electric/power tools',
+  'Working at elevations/overhead',
+  'Hand paint/wire brush/scrape',
+  'Hydro/pneumatic pressure test',
+  'Crane/lifting equipment',
+  'Use of heavy equipment',
+];
+
 // ------------- PPE Render Transform (display labels & items) -------------
 type PPECategory = {
-  key: string;                // original key in ADDITIONAL_PPE for storage (e.g., 'HAND_FACE_RESPIRATORY')
-  label: string;              // display label (e.g., 'HEAD/FACE/RESPIRATORY')
+  key: string;                // original key in ADDITIONAL_PPE for storage
+  label: string;              // display label
   items: string[];            // display item labels
   postInputs?: Array<{
-    // conditional extra inputs that appear based on selected checkboxes
-    dependsOn: string[];      // item labels that trigger this input
-    key: string;              // storage key for the input
-    label: string;            // display label
+    dependsOn: string[];
+    key: string;
+    label: string;
     placeholder?: string;
   }>;
 };
@@ -51,14 +92,15 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
   const headOrig = additionalPpe.HAND_FACE_RESPIRATORY ?? [];
   const headItems = headOrig
     .map((it) => {
-      if (it.toLowerCase().includes('clamping')) return 'Cutting Goggles (Torch)';
-      if (it.toLowerCase() === 'full face*') return ''; // remove
-      if (it.toLowerCase() === 'hearing prot.') return 'Hearing Protection';
-      if (it.toLowerCase() === 'double hearing protect') return 'Double Hearing Protection';
-      if (it.toLowerCase() === 'half face*') return 'Half Face Respirator*';
+      const low = it.toLowerCase();
+      if (low.includes('clamping')) return 'Cutting Goggles (Torch)';
+      if (low === 'full face*') return ''; // remove
+      if (low === 'hearing prot.') return 'Hearing Protection';
+      if (low === 'double hearing protect') return 'Double Hearing Protection';
+      if (low === 'half face*') return 'Half Face Respirator*';
       return it;
     })
-    .filter(Boolean);
+    .filter(Boolean) as string[];
 
   // Add new respiratory items
   headItems.push(
@@ -69,23 +111,24 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
     '5-Min Escape Pack'
   );
 
-  // HAND category tweaks
+  // HAND adjustments
   const handOrig = additionalPpe.HAND ?? [];
-  const handItems = handOrig
-    .map((it) => {
-      if (it.toLowerCase() === 'impact gloves') return 'Impact Gloves';
-      if (it.toLowerCase().startsWith('chemical gloves')) return 'Chemical Gloves';
-      return it;
-    });
+  const handItems = handOrig.map((it) => {
+    const low = it.toLowerCase();
+    if (low === 'impact gloves') return 'Impact Gloves';
+    if (low.startsWith('chemical gloves')) return 'Chemical Gloves';
+    return it;
+  });
 
-  // BODY (from OTHER_PPE) with removes/relabels
+  // BODY (from OTHER_PPE) with removals/renames
   const bodyOrig = additionalPpe.OTHER_PPE ?? [];
   const bodyItems = bodyOrig
     .map((it) => {
-      if (it.toLowerCase() === 'full body harness') return 'Fall Protection Harness & Lanyards';
-      if (it.toLowerCase() === 'smoldering ppes') return 'Rescue Lifeline';
-      if (it.toLowerCase() === 'fire retardant clothing') return 'Fire Retardant (FR) Clothing';
-      if (it.toLowerCase() === 'kmit two watch vest') return 'Chemical Suit';
+      const low = it.toLowerCase();
+      if (low === 'full body harness') return 'Fall Protection Harness & Lanyards';
+      if (low === 'smoldering ppes') return 'Rescue Lifeline';
+      if (low === 'fire retardant clothing') return 'Fire Retardant (FR) Clothing';
+      if (low === 'kmit two watch vest') return 'Chemical Suit';
       return it;
     })
     .filter((it) => ![
@@ -96,9 +139,9 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
       'Other PPE – Level C',
     ].includes(it));
 
-  // OTHER SAFETY EQUIPMENT (from OTHER)
+  // OTHER SAFETY EQUIPMENT (from OTHER; label only changes)
   const otherEquipOrig = additionalPpe.OTHER ?? [];
-  const otherEquipItems = otherEquipOrig; // label only changes
+  const otherEquipItems = otherEquipOrig;
 
   const categories: PPECategory[] = [
     {
@@ -146,10 +189,10 @@ export default function NewPermit() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // VOC N/A default: true (row disabled unless unchecked)
+  // VOC N/A default true (row disabled until unchecked)
   const [vocNA, setVocNA] = useState<boolean>(true);
 
-  // Energy Control N/A default: true (section disabled unless unchecked)
+  // Energy Control N/A default true (section disabled until unchecked)
   const [energyNA, setEnergyNA] = useState<boolean>(true);
 
   // Dynamic header labels for the "Time:" columns
@@ -157,17 +200,28 @@ export default function NewPermit() {
     Array.from({ length: DYNAMIC_TIME_COLS }, () => '')
   );
 
+  // Build current date/time defaults (local)
+  const now = useMemo(() => new Date(), []);
+  const defaultDate = useMemo(() => {
+    const d = new Date();
+    return d.toISOString().slice(0, 10);
+  }, []);
+  const defaultTime = useMemo(() => {
+    const d = new Date();
+    return d.toTimeString().slice(0, 5);
+  }, []);
+
   // Main form state
   const [formData, setFormData] = useState({
     facility: '',
     location: '',
     contractor: '',
     description_of_work: '',
-    date_issued: '',
-    time_issued: '',
+    date_issued: defaultDate, // prepopulated
+    time_issued: defaultTime, // prepopulated
     date_expires: '',
     time_expires: '',
-    permit_types: {} as JsonMap,        // includes PRCS/NPRCS flags next to Confined Space
+    permit_types: {} as JsonMap,        // includes PRCS/NPRCS flags next to CONFINED SPACE
     ppe_requirements: {} as JsonMap,
     additional_ppe: {} as JsonMap,
     hazard_reduction: {} as JsonMap,
@@ -175,8 +229,8 @@ export default function NewPermit() {
     energy_control: {} as JsonMap,
     special_conditions: {} as JsonMap,
     additional_documents: {} as JsonMap,
-    air_monitoring: {} as JsonMap,      // table: { [gas]: { Initial, second, t1..tN } }
-    air_monitoring_headers: {} as JsonMap, // { t1: '10:00', t2: '11:00', ... }
+    air_monitoring: {} as JsonMap,      // table: { gas: { Initial, t1..tN } }
+    air_monitoring_headers: {} as JsonMap, // { t1: '10:00', ... }
     instrument_info: {} as JsonMap,     // { make, model, serial, bump_tested: boolean|null, calibration_current: boolean|null }
     signatures: { issuer: '', receiver: '' } as JsonMap,
   });
@@ -214,7 +268,7 @@ export default function NewPermit() {
       if (Object.keys(prev.air_monitoring ?? {}).length > 0) return prev;
       const table: JsonMap = {};
       GAS_ROWS.forEach(gas => {
-        table[gas] = { Initial: '', second: '' };
+        table[gas] = { Initial: '' };
         for (let i = 1; i <= DYNAMIC_TIME_COLS; i++) {
           table[gas][`t${i}`] = '';
         }
@@ -226,7 +280,7 @@ export default function NewPermit() {
     });
   }, []);
 
-  // ---------- Simple helpers ----------
+  // ---------- Helpers ----------
   const handleText = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -263,6 +317,7 @@ export default function NewPermit() {
     });
   };
 
+  // Accept string | boolean so we can store booleans for instrument flags
   const setNestedText = (section: keyof typeof formData, key: string, value: string | boolean) => {
     setFormData(prev => ({
       ...prev,
@@ -317,12 +372,12 @@ export default function NewPermit() {
     }));
   }, [formData.date_issued, formData.time_issued]);
 
-  // ---------- Monitoring enabled if Hot Work OR Confined Space (incl. PRCS/NPRCS) ----------
+  // ---------- Monitoring enabled if Hot Work OR CONFINED SPACE (incl. PRCS/NPRCS) ----------
   const monitoringEnabled = useMemo(() => {
     const anySelected = (keys: string[]) => keys?.some(k => !!formData.permit_types[k]);
-    const hotWorkSelected = anySelected(PERMIT_TYPES?.HOT_WORK ?? []);
+    const hotWorkSelected = anySelected(transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []));
     const confinedSelected =
-      anySelected(PERMIT_TYPES?.CONFINED_SPACE ?? []) ||
+      anySelected(transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? [])) ||
       !!formData.permit_types?.PRCS ||
       !!formData.permit_types?.NPRCS;
     return hotWorkSelected || confinedSelected;
@@ -360,10 +415,18 @@ export default function NewPermit() {
     })();
   }, [yearPrefix]);
 
-  // ---------- Submit ----------
+  // ---------- Submit (with back-dating validation) ----------
   const handleSubmit = async () => {
     try {
       if (!userId) return alert('Not signed in');
+
+      // Back-date validation
+      const issued = new Date(`${formData.date_issued}T${formData.time_issued}`);
+      const nowLocal = new Date();
+      if (isNaN(issued.getTime()) || issued.getTime() < nowLocal.getTime()) {
+        alert('Date/Time Issued cannot be in the past.');
+        return;
+      }
 
       setLoading(true);
 
@@ -441,6 +504,7 @@ export default function NewPermit() {
               name="date_issued"
               type="date"
               value={formData.date_issued}
+              min={defaultDate}
               onChange={handleText}
               className="mt-1 w-full border rounded px-2 py-1"
             />
@@ -520,17 +584,17 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Permit Types (top row: Hot Work + Confined Space) */}
+      {/* Permit Types (top row: HOT WORK + CONFINED SPACE) */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Permit Types</div>
 
         {/* Top row: HOT WORK & CONFINED SPACE side by side */}
         <div className="p-3 grid md:grid-cols-2 gap-4">
-          {/* HOT WORK */}
+          {/* HOT WORK (transformed) */}
           <div className="border p-2 rounded">
             <div className="font-medium mb-2">Hot Work</div>
             <div className="space-y-2">
-              {(PERMIT_TYPES?.HOT_WORK ?? []).map((item) => {
+              {transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []).map((item) => {
                 const checked = !!(formData.permit_types as JsonMap)[item];
                 return (
                   <label key={item} className="flex items-center gap-2">
@@ -552,15 +616,20 @@ export default function NewPermit() {
             </div>
           </div>
 
-          {/* CONFINED SPACE with PRCS/NPRCS inline */}
+          {/* CONFINED SPACE (uppercased label) w/ PRCS/NPRCS mutually exclusive */}
           <div className="border p-2 rounded">
             <div className="font-medium mb-2 flex items-center gap-4">
-              <span>Confined Space</span>
+              <span>CONFINED SPACE</span>
               <label className="flex items-center gap-1 text-sm">
                 <input
                   type="checkbox"
                   checked={!!formData.permit_types.PRCS}
-                  onChange={() => toggleSimple('permit_types', 'PRCS')}
+                  onChange={() =>
+                    setFormData(prev => ({
+                      ...prev,
+                      permit_types: { ...(prev.permit_types ?? {}), PRCS: !prev.permit_types?.PRCS, NPRCS: false }
+                    }))
+                  }
                 />
                 PRCS
               </label>
@@ -568,13 +637,18 @@ export default function NewPermit() {
                 <input
                   type="checkbox"
                   checked={!!formData.permit_types.NPRCS}
-                  onChange={() => toggleSimple('permit_types', 'NPRCS')}
+                  onChange={() =>
+                    setFormData(prev => ({
+                      ...prev,
+                      permit_types: { ...(prev.permit_types ?? {}), NPRCS: !prev.permit_types?.NPRCS, PRCS: false }
+                    }))
+                  }
                 />
                 NPRCS
               </label>
             </div>
             <div className="space-y-2">
-              {(PERMIT_TYPES?.CONFINED_SPACE ?? []).map((item) => {
+              {transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? []).map((item) => {
                 const checked = !!(formData.permit_types as JsonMap)[item];
                 return (
                   <label key={item} className="flex items-center gap-2">
@@ -597,11 +671,38 @@ export default function NewPermit() {
           </div>
         </div>
 
-        {/* Remaining categories excluding VEHICLE_ENTRY, PRCS, NPRCS, DNCS, HOT_WORK, CONFINED_SPACE */}
+        {/* Remaining categories excluding VEHICLE_ENTRY, PRCS, NPRCS, DNCS, HOT_WORK, CONFINED_SPACE; replace GENERAL_WORK */}
         <div className="px-3 pb-3 grid md:grid-cols-2 gap-4">
+          {/* GENERAL WORK (replaced list) */}
+          <div className="border p-2 rounded">
+            <div className="font-medium mb-2">GENERAL WORK</div>
+            <div className="space-y-2">
+              {GENERAL_WORK_REPLACED.map((item) => {
+                const checked = !!(formData.permit_types as JsonMap)[item];
+                return (
+                  <label key={item} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSimple('permit_types', item)}
+                    />
+                    <span>{item}</span>
+                  </label>
+                );
+              })}
+              <input
+                placeholder="Other (specify)"
+                className="mt-2 w-full border rounded px-2 py-1"
+                value={(formData.permit_types?.GENERAL_WORK_other as string) ?? ''}
+                onChange={(e) => setNestedText('permit_types', 'GENERAL_WORK_other', e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* Other remaining categories, excluding unwanted ones */}
           {Object.entries(PERMIT_TYPES)
             .filter(([key]) =>
-              !['VEHICLE_ENTRY', 'PRCS', 'NPRCS', 'DNCS', 'HOT_WORK', 'CONFINED_SPACE'].includes(key)
+              !['VEHICLE_ENTRY', 'PRCS', 'NPRCS', 'DNCS', 'HOT_WORK', 'CONFINED_SPACE', 'GENERAL_WORK'].includes(key)
             )
             .map(([category, items]) => (
               <div key={category} className="border p-2 rounded">
@@ -640,7 +741,7 @@ export default function NewPermit() {
           Personal Protective Equipment (Minimum PPE Requirements: Hard Hat, Safety Glasses, Gloves, Safety Toe Footwear, and Reflective Vest)
         </div>
         <div className="p-3 grid md:grid-cols-2 gap-4">
-          {PPE_RENDER.map(({ key, label, items, postInputs }) => {
+          {useMemo(() => buildPPERender(ADDITIONAL_PPE), []).map(({ key, label, items, postInputs }) => {
             const catObj = (formData.additional_ppe as JsonMap)[key] ?? {};
             const isSelected = (name: string) => !!catObj[name];
 
@@ -898,7 +999,7 @@ export default function NewPermit() {
                 onChange={() => setVocNA(v => !v)}
                 disabled={!monitoringEnabled}
               />
-              VOC N/A (disable VOC row)
+              VOC N/A
             </label>
           </div>
 
@@ -907,8 +1008,7 @@ export default function NewPermit() {
               <tr>
                 <th className="border px-2 py-1 text-left">Gas</th>
                 <th className="border px-2 py-1 text-left">Safe Range</th>
-                <th className="border px-2 py-1 text-left">{STATIC_COLS[0]}</th>
-                <th className="border px-2 py-1 text-left">{STATIC_COLS[1]}</th>
+                <th className="border px-2 py-1 text-left">Initial</th>
                 {Array.from({ length: DYNAMIC_TIME_COLS }).map((_, idx) => (
                   <th key={`h-${idx}`} className="border px-2 py-1 text-left">
                     <div className="flex items-center gap-2">
@@ -940,15 +1040,6 @@ export default function NewPermit() {
                         disabled={!monitoringEnabled || rowDisabled}
                       />
                     </td>
-                    {/* 2nd Check */}
-                    <td className="border px-1 py-1">
-                      <input
-                        className="w-full border rounded px-1 py-0.5"
-                        value={formData.air_monitoring?.[gas]?.['second'] ?? ''}
-                        onChange={(e) => setAirCell(gas, 'second', e.target.value)}
-                        disabled={!monitoringEnabled || rowDisabled}
-                      />
-                    </td>
                     {/* Dynamic Time columns (t1..tN) */}
                     {Array.from({ length: DYNAMIC_TIME_COLS }).map((_, idx) => {
                       const key = `t${idx + 1}`;
@@ -971,7 +1062,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Instrument Info (tied to monitoringEnabled) */}
+      {/* Instrument Info (condensed) */}
       <div
         className={[
           'border rounded',
@@ -979,87 +1070,83 @@ export default function NewPermit() {
         ].join(' ')}
       >
         <div className="bg-kmGray px-3 py-2 font-semibold">Instrument Info</div>
-        <div className="p-3 grid md:grid-cols-2 gap-4">
-          <div>
-            <label className="font-medium">Make</label>
-            <input
-              className="mt-1 w-full border rounded px-2 py-1"
-              value={formData.instrument_info.make ?? ''}
-              onChange={(e) => setNestedText('instrument_info', 'make', e.target.value)}
-              disabled={!monitoringEnabled}
-            />
-          </div>
-          <div>
-            <label className="font-medium">Model</label>
-            <input
-              className="mt-1 w-full border rounded px-2 py-1"
-              value={formData.instrument_info.model ?? ''}
-              onChange={(e) => setNestedText('instrument_info', 'model', e.target.value)}
-              disabled={!monitoringEnabled}
-            />
-          </div>
-          <div>
-            <label className="font-medium">Serial</label>
-            <input
-              className="mt-1 w-full border rounded px-2 py-1"
-              value={formData.instrument_info.serial ?? ''}
-              onChange={(e) => setNestedText('instrument_info', 'serial', e.target.value)}
-              disabled={!monitoringEnabled}
-            />
-          </div>
-
-          {/* Bump Tested Before Use: Yes/No (mutually exclusive checkboxes) */}
-          <div className="flex items-center gap-6">
-            <span className="font-medium">Bump Tested Before Use:</span>
-            <label className="flex items-center gap-1">
+        <div className="p-3 grid md:grid-cols-3 gap-4">
+          {/* Row: Make, Model, Serial */}
+          <div className="md:col-span-3 grid md:grid-cols-3 gap-4">
+            <div>
+              <label className="font-medium">Make</label>
               <input
-                type="checkbox"
-                checked={formData.instrument_info.bump_tested === true}
-                onChange={() =>
-                  setNestedText('instrument_info', 'bump_tested', true)
-                }
+                className="mt-1 w-full border rounded px-2 py-1"
+                value={formData.instrument_info.make ?? ''}
+                onChange={(e) => setNestedText('instrument_info', 'make', e.target.value)}
                 disabled={!monitoringEnabled}
               />
-              Yes
-            </label>
-            <label className="flex items-center gap-1">
+            </div>
+            <div>
+              <label className="font-medium">Model</label>
               <input
-                type="checkbox"
-                checked={formData.instrument_info.bump_tested === false}
-                onChange={() =>
-                  setNestedText('instrument_info', 'bump_tested', false)
-                }
+                className="mt-1 w-full border rounded px-2 py-1"
+                value={formData.instrument_info.model ?? ''}
+                onChange={(e) => setNestedText('instrument_info', 'model', e.target.value)}
                 disabled={!monitoringEnabled}
               />
-              No
-            </label>
+            </div>
+            <div>
+              <label className="font-medium">Serial</label>
+              <input
+                className="mt-1 w-full border rounded px-2 py-1"
+                value={formData.instrument_info.serial ?? ''}
+                onChange={(e) => setNestedText('instrument_info', 'serial', e.target.value)}
+                disabled={!monitoringEnabled}
+              />
+            </div>
           </div>
 
-          {/* Calibration Current: Yes/No */}
-          <div className="flex items-center gap-6">
-            <span className="font-medium">Calibration Current:</span>
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={formData.instrument_info.calibration_current === true}
-                onChange={() =>
-                  setNestedText('instrument_info', 'calibration_current', true)
-                }
-                disabled={!monitoringEnabled}
-              />
-              Yes
-            </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={formData.instrument_info.calibration_current === false}
-                onChange={() =>
-                  setNestedText('instrument_info', 'calibration_current', false)
-                }
-                disabled={!monitoringEnabled}
-              />
-              No
-            </label>
+          {/* Row: Bump Tested Before Use & Calibration Current */}
+          <div className="md:col-span-3 grid md:grid-cols-2 gap-4">
+            <div className="flex items-center gap-6">
+              <span className="font-medium">Bump Tested Before Use:</span>
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={formData.instrument_info.bump_tested === true}
+                  onChange={() => setNestedText('instrument_info', 'bump_tested', true)}
+                  disabled={!monitoringEnabled}
+                />
+                Yes
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={formData.instrument_info.bump_tested === false}
+                  onChange={() => setNestedText('instrument_info', 'bump_tested', false)}
+                  disabled={!monitoringEnabled}
+                />
+                No
+              </label>
+            </div>
+
+            <div className="flex items-center gap-6">
+              <span className="font-medium">Calibration Current:</span>
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={formData.instrument_info.calibration_current === true}
+                  onChange={() => setNestedText('instrument_info', 'calibration_current', true)}
+                  disabled={!monitoringEnabled}
+                />
+                Yes
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={formData.instrument_info.calibration_current === false}
+                  onChange={() => setNestedText('instrument_info', 'calibration_current', false)}
+                  disabled={!monitoringEnabled}
+                />
+                No
+              </label>
+            </div>
           </div>
         </div>
       </div>
