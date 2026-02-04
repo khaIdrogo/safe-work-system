@@ -194,7 +194,9 @@ const EQUIPMENT_CONDITION_NEW = [
 ];
 
 /* ---------------- Special Conditions transforms & ordering ---------------- */
+
 function renameSC(item: string): string {
+  // existing renames retained:
   if (item === 'Fire resistant/blanket or barriers are in place') return 'Fire resistant blankets or barriers are in place';
   if (item === 'Fire Watch required (assigned as course)') return 'Fire Watch required and assigned';
   if (item === 'Fire extinguishers required') return 'Fire extinguishers readily accessible';
@@ -202,24 +204,65 @@ function renameSC(item: string): string {
   if (item === 'Ventilation as required') return 'Ventilation is adequate';
   if (item === 'Multiple personnel plan or attendant required') return 'Multiple confined space attendants required';
   if (item === 'Resource team required on site as a place') return 'Rescue team/equipment/plan on site and in place';
-  if (item === 'Ensure communication with committee has been documented') return 'Communication with entrants has been determined (Comm. Type: textbox)';
+  if (item === 'Ensure communication with committee has been documented') return 'Communication with entrants has been determined (Comm. Type:)';
   if (item === 'Use of special lifeline required') return 'Use of tripod/lifeline required';
-  // normalize firefighting row text variants to a single canonical string
+  // normalize firefighting text to a single canonical string
   if (item === 'Firefighting equipment inspected inspection current' || item === 'Firefighting equipment inspected/ inspection current') {
     return 'Firefighting equipment inspected/ inspection current';
   }
+
+  // NEW renames you requested:
+  if (item === 'Pre-plan inspection/guards required') return 'Wall/floor openings covered or sealed';
+  if (item === 'Damage controls/operations required') return 'Flammable liquids/vapors/dusts removed or controlled';
+  if (item === 'Flammable/Combustible materials have been removed or protected (within 50’ of hot work area)') {
+    return 'Combustible materials have been removed or protected (within 50’ of hot work area)';
+  }
+  if (item === 'Storage drum/valve equipment items verified') return 'Area atmosphere tested with gas monitor';
+
   return item;
 }
 
+
+
 function buildSpecialConditionsList(left: string[], right: string[]): string[] {
-  // combine, rename, filter
   let combined = [...left, ...right]
     .map(renameSC)
     .filter((it) =>
       it !== 'Vehicle engines turned off (TV Protection)' &&
       it !== 'Stop all work and report unsafe conditions' &&
-      it.toLowerCase() !== 'other'
+      it.toLowerCase() !== 'other' &&
+      it !== 'Operational activity considered' // remove per request
     );
+
+  // unique
+  combined = Array.from(new Set(combined));
+
+  const target = 'Firefighting equipment inspected/ inspection current';
+  const areaHazards = 'Area has been inspected for obvious hazards';
+  const wallFloor = 'Wall/floor openings covered or sealed';
+  const flamRemoved = 'Flammable liquids/vapors/dusts removed or controlled';
+  const fireWatch = 'Fire Watch required and assigned';
+
+  // Remove those (we'll re-insert in order)
+  combined = combined.filter((x) =>
+    ![areaHazards, wallFloor, flamRemoved].includes(x)
+  );
+
+  // Move "fireWatch" below "flamRemoved" if needed
+  combined = combined.filter((x) => x !== fireWatch);
+
+  const idx = combined.indexOf(target);
+  if (idx >= 0) {
+    const before = combined.slice(0, idx + 1);
+    const after = combined.slice(idx + 1);
+    // Desired block right after target:
+    return [...before, areaHazards, wallFloor, flamRemoved, fireWatch, ...after];
+  }
+
+  // If "target" not found, put the block at the front
+  return [target, areaHazards, wallFloor, flamRemoved, fireWatch, ...combined.filter((x) => x !== target)];
+}
+
 
   // ensure unique
   combined = Array.from(new Set(combined));
@@ -709,45 +752,55 @@ export default function NewPermit() {
         {/* HOT WORK & CONFINED SPACE side-by-side */}
         <div className="p-3 grid md:grid-cols-2 gap-4">
           {/* HOT WORK */}
-          <div className="border p-2 rounded">
-            <div className="font-medium mb-2">HOT WORK</div>
-            <div className="space-y-2">
-              {hotWorkItems.map((item) => {
-                const checked = !!(formData.permit_types as JsonMap)[item];
-                const isBurnBrazing = item === 'Burning/Brazing/Welding';
-                return (
-                  <label key={item} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleSimple('permit_types', item)}
-                    />
-                    <span className={isBurnBrazing ? 'text-red-600 font-semibold' : ''}>
-                      {item}
-                    </span>
-                  </label>
-                );
-              })}
-              {/* Exact area of Hot Work (appears if any hot work item is selected) */}
-              {anyHotWorkSelected && (
-                <div className="mt-2">
-                  <label className="font-medium">Exact area of Hot Work</label>
-                  <input
-                    className="mt-1 w-full border rounded px-2 py-1"
-                    value={(formData.permit_types?.hotwork_exact_area as string) ?? ''}
-                    onChange={(e) => setNestedText('permit_types', 'hotwork_exact_area', e.target.value)}
-                  />
-                </div>
-              )}
-              <input
-                placeholder="Other (specify)"
-                className="mt-2 w-full border rounded px-2 py-1"
-                value={(formData.permit_types?.hotwork_other as string) ?? ''}
-                onChange={(e) => setNestedText('permit_types', 'hotwork_other', e.target.value)}
-              />
-            </div>
-          </div>
+         
+<div className="border p-2 rounded">
+  <div className="font-medium mb-2 text-red-600">HOT WORK</div>
+  <div className="space-y-2">
+    {hotWorkItems.map((item) => {
+      const checked = !!(formData.permit_types as JsonMap)[item];
+      // Mark these items in red
+      const redItems = new Set([
+        'Burning/Brazing/Welding',
+        'Grinding/Cutting',
+        'Use of torch',
+      ]);
+      return (
+        <label key={item} className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={() => toggleSimple('permit_types', item)}
+          />
+          <span className={redItems.has(item) ? 'text-red-600 font-semibold' : ''}>
+            {item}
+          </span>
+        </label>
+      );
+    })}
 
+    {/* Exact area of Hot Work (appears if any hot work item is selected) */}
+    {anyHotWorkSelected && (
+      <div className="mt-2">
+        <label className="font-medium">Exact area of Hot Work</label>
+        <input
+          className="mt-1 w-full border rounded px-2 py-1"
+          value={(formData.permit_types?.hotwork_exact_area as string) ?? ''}
+          onChange={(e) => setNestedText('permit_types', 'hotwork_exact_area', e.target.value)}
+        />
+      </div>
+    )}
+
+    {/* Red label for Other (specify) */}
+    <div className="mt-2">
+      <label className="text-red-600 font-semibold">Other (specify)</label>
+      <input
+        className="mt-1 w-full border rounded px-2 py-1"
+        value={(formData.permit_types?.hotwork_other as string) ?? ''}
+        onChange={(e) => setNestedText('permit_types', 'hotwork_other', e.target.value)}
+      />
+    </div>
+  </div>
+</div>
           {/* CONFINED SPACE (PRCS/NPRCS mutually exclusive) */}
           <div className="border p-2 rounded">
             <div className="font-medium mb-2 flex items-center gap-4">
@@ -1082,62 +1135,114 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Special Conditions (Yes/N/A per item; ordered & renamed per request) */}
-      <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Special Conditions</div>
-        <div className="p-3">
-          <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
-            <div>Item</div>
-            <div className="text-center">Yes</div>
-            <div className="text-center">N/A</div>
-          </div>
+      
+{/* Special Conditions (Yes/N/A per item; ordered & renamed) */}
+<div className="border rounded">
+  <div className="bg-kmGray px-3 py-2 font-semibold">Special Conditions</div>
+  <div className="p-3">
+    <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
+      <div>Item</div>
+      <div className="text-center">Yes</div>
+      <div className="text-center">N/A</div>
+    </div>
 
-          <div className="space-y-1">
-            {SPECIAL_LIST.map((item) => {
-              const isCommRow = item === 'Communication with entrants has been determined (Comm. Type: textbox)';
-              return (
-                <div key={item} className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1">
-                  <div className="text-sm">{item}</div>
-                  <div className="flex justify-center">
+    <div className="space-y-1">
+      {SPECIAL_LIST.map((item) => {
+        const isComm = item === 'Communication with entrants has been determined (Comm. Type:)';
+        const isFireWatch = item === 'Fire Watch required and assigned';
+
+        const yes = getSCYes(item);
+        const na  = getSCNA(item);
+
+        return (
+          <div key={item} className="border rounded px-2 py-1">
+            {/* Main row */}
+            <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center">
+              {/* Item cell; inline Comm. Type input when Yes */}
+              <div className="text-sm flex items-center gap-2 flex-wrap">
+                <span>{item}</span>
+                {isComm && yes && (
+                  <span className="flex items-center gap-1">
+                    <span>Comm. Type:</span>
+                    <input
+                      className="w-40 border rounded px-2 py-0.5"
+                      value={(formData.special_conditions?.comm_type as string) ?? ''}
+                      onChange={(e) => setNestedText('special_conditions', 'comm_type', e.target.value)}
+                    />
+                  </span>
+                )}
+              </div>
+
+              {/* Yes / N/A */}
+              <div className="flex justify-center">
+                <input
+                  type="checkbox"
+                  checked={yes}
+                  onChange={(e) => setSCYesNA(item, 'yes', e.target.checked)}
+                />
+              </div>
+              <div className="flex justify-center">
+                <input
+                  type="checkbox"
+                  checked={na}
+                  onChange={(e) => setSCYesNA(item, 'na', e.target.checked)}
+                />
+              </div>
+            </div>
+
+            {/* Fire Watch trigger section when Yes */}
+            {isFireWatch && yes && (
+              <div className="mt-2 grid md:grid-cols-2 gap-4">
+                <div className="flex items-center gap-4">
+                  <span className="text-sm font-medium">
+                    Fire watch duration after hot work completed:
+                  </span>
+                  <label className="flex items-center gap-1">
                     <input
                       type="checkbox"
-                      checked={getSCYes(item)}
-                      onChange={(e) => setSCYesNA(item, 'yes', e.target.checked)}
+                      checked={formData.special_conditions.fire_watch_after === '30'}
+                      onChange={() => setNestedText('special_conditions', 'fire_watch_after', '30')}
                     />
-                  </div>
-                  <div className="flex justify-center">
+                    30 min
+                  </label>
+                  <label className="flex items-center gap-1">
                     <input
                       type="checkbox"
-                      checked={getSCNA(item)}
-                      onChange={(e) => setSCYesNA(item, 'na', e.target.checked)}
+                      checked={formData.special_conditions.fire_watch_after === '>30'}
+                      onChange={() => setNestedText('special_conditions', 'fire_watch_after', '>30')}
                     />
-                  </div>
-
-                  {isCommRow && getSCYes(item) && (
-                    <div className="col-span-3 mt-1">
-                      <label className="text-sm font-medium">Comm. Type</label>
-                      <input
-                        className="mt-1 w-56 border rounded px-2 py-1"
-                        value={(formData.special_conditions?.comm_type as string) ?? ''}
-                        onChange={(e) => setNestedText('special_conditions', 'comm_type', e.target.value)}
-                      />
-                    </div>
-                  )}
+                    &gt;30 min
+                  </label>
                 </div>
-              );
-            })}
-          </div>
 
-          <div className="mt-3">
-            <label className="font-medium">Other special conditions</label>
-            <input
-              className="mt-1 w-full border rounded px-2 py-1"
-              value={(formData.special_conditions?.other_text as string) ?? ''}
-              onChange={(e) => setNestedText('special_conditions', 'other_text', e.target.value)}
-            />
+                {formData.special_conditions.fire_watch_after === '>30' && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">Length of time:</span>
+                    <input
+                      className="w-24 border rounded px-2 py-0.5"
+                      value={(formData.special_conditions.fire_watch_length as string) ?? ''}
+                      onChange={(e) => setNestedText('special_conditions', 'fire_watch_length', e.target.value)}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        </div>
-      </div>
+        );
+      })}
+    </div>
+
+    <div className="mt-3">
+      <label className="font-medium">Other special conditions</label>
+      <input
+        className="mt-1 w-full border rounded px-2 py-1"
+        value={(formData.special_conditions?.other_text as string) ?? ''}
+        onChange={(e) => setNestedText('special_conditions', 'other_text', e.target.value)}
+      />
+    </div>
+  </div>
+</div>
+
 
       {/* Air Monitoring (Perform continuous air monitoring, record hourly) */}
       <div className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}>
