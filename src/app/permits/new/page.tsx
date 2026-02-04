@@ -17,12 +17,13 @@ type JsonMap = Record<string, any>;
 /* ---------------- Air Monitoring ---------------- */
 const DYNAMIC_TIME_COLS = 9; // editable time headers (t1..t9)
 const GAS_ROWS = AIR_MONITORING_GASES.map(({ gas }) => gas);
-const SAFE_RANGE: Record<string, string> = {
-  LEL: '<10%',
-  O₂: '19.5-23.5%',
-  H₂S: '<10ppm',
-  CO: '<35ppm',
-  VOC: '—',
+const SAFE_RANGE: Record<string, string> = { 
+  'LEL': '<10%',
+  'O₂': '19.5-23.5%',
+  'H₂S': '<10ppm',
+  'CO': '<35ppm',
+  'VOC': '—',
+
 };
 
 /* ---------------- Permit Types transforms ---------------- */
