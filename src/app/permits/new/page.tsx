@@ -6,7 +6,6 @@ import {
   PERMIT_TYPES,
   ADDITIONAL_PPE,
   HAZARD_REDUCTION_ITEMS,
-  // EQUIPMENT_CONDITION_ITEMS,  // not used; replaced per spec
   SPECIAL_CONDITION_REQUIREMENTS_LEFT,
   SPECIAL_CONDITION_REQUIREMENTS_RIGHT,
   ADDITIONAL_DOCUMENTS,
@@ -15,22 +14,18 @@ import {
 
 type JsonMap = Record<string, any>;
 
-// ---------------- Air Monitoring ----------------
+/* ---------------- Air Monitoring ---------------- */
 const DYNAMIC_TIME_COLS = 9; // editable time headers (t1..t9)
-
-// Gases from constants
 const GAS_ROWS = AIR_MONITORING_GASES.map(({ gas }) => gas);
-
-// Safe ranges
 const SAFE_RANGE: Record<string, string> = {
-  'LEL': '<10%',
-  'O₂': '19.5-23.5%',
-  'H₂S': '<10ppm',
-  'CO': '<35ppm',
-  'VOC': '—',
+  LEL: '<10%',
+  O₂: '19.5-23.5%',
+  H₂S: '<10ppm',
+  CO: '<35ppm',
+  VOC: '—',
 };
 
-// ---------------- Permit Types transforms ----------------
+/* ---------------- Permit Types transforms ---------------- */
 function transformHotWork(items: string[]): string[] {
   const removed = new Set([
     'Use of electric power tools',
@@ -42,7 +37,7 @@ function transformHotWork(items: string[]): string[] {
   return items
     .filter((it) => !removed.has(it))
     .map((it) => {
-      if (it === 'Burning/Welding/Cutting') return 'Burning/Welding';
+      if (it === 'Burning/Welding/Cutting') return 'Burning/Brazing/Welding'; // updated per request
       if (it === 'Grinding/Chopping (Grinding)') return 'Grinding/Cutting';
       return it;
     });
@@ -70,10 +65,10 @@ const GENERAL_WORK_REPLACED = [
   'Use of heavy equipment',
 ];
 
-// ---------------- PPE rendering transform ----------------
+/* ---------------- PPE rendering transform ---------------- */
 type PPECategory = {
-  key: string;    // original key to store under additional_ppe JSON
-  label: string;  // display label
+  key: string;
+  label: string;
   items: string[];
   postInputs?: Array<{
     dependsOn: string[];
@@ -84,20 +79,19 @@ type PPECategory = {
 };
 
 function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
-  // HEAD/FACE/RESPIRATORY from HAND_FACE_RESPIRATORY
+  // HEAD/FACE/RESPIRATORY
   const headOrig = additionalPpe.HAND_FACE_RESPIRATORY ?? [];
   const headItems = headOrig
     .map((it) => {
       const low = it.toLowerCase();
       if (low.includes('clamping')) return 'Cutting Goggles (Torch)';
-      if (low === 'full face*') return ''; // remove
+      if (low === 'full face*') return '';
       if (low === 'hearing prot.') return 'Hearing Protection';
       if (low === 'double hearing protect') return 'Double Hearing Protection';
       if (low === 'half face*') return 'Half Face Respirator*';
       return it;
     })
     .filter(Boolean) as string[];
-
   headItems.push(
     'Face Shield',
     'Full Face Respirator*',
@@ -115,7 +109,7 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
     return it;
   });
 
-  // BODY from OTHER_PPE with mapping/removals
+  // BODY (OTHER_PPE)
   const bodyOrig = additionalPpe.OTHER_PPE ?? [];
   const bodyItems = bodyOrig
     .map((it) => {
@@ -134,7 +128,7 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
       'Other PPE – Level C',
     ].includes(it));
 
-  // OTHER SAFETY EQUIPMENT (from OTHER) with new filtering/remap
+  // OTHER SAFETY EQUIPMENT (OTHER)
   const otherOrig = additionalPpe.OTHER ?? [];
   const otherItems = otherOrig
     .map((it) => (it === 'Intentionally Split equip / 12 volt lighting' ? 'Intrinsically Safe Equipment' : it))
@@ -160,35 +154,17 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
           label: '*Cartridge Type Required:',
           placeholder: 'Enter cartridge type',
         },
-      ]
+      ],
     },
-    {
-      key: 'HAND',
-      label: 'HAND',
-      items: handItems,
-      postInputs: [
-        {
-          dependsOn: ['Chemical Gloves'],
-          key: 'chem_gloves_type',
-          label: 'Type:',
-          placeholder: 'Enter chemical glove type',
-        }
-      ]
-    },
-    {
-      key: 'OTHER_PPE',
-      label: 'BODY',
-      items: bodyItems,
-    },
-    {
-      key: 'OTHER',
-      label: 'OTHER SAFETY EQUIPMENT',
-      items: otherItems,
-    },
+    { key: 'HAND', label: 'HAND', items: handItems, postInputs: [
+      { dependsOn: ['Chemical Gloves'], key: 'chem_gloves_type', label: 'Type:', placeholder: 'Enter chemical glove type' }
+    ]},
+    { key: 'OTHER_PPE', label: 'BODY', items: bodyItems },
+    { key: 'OTHER', label: 'OTHER SAFETY EQUIPMENT', items: otherItems },
   ];
 }
 
-// ---------------- Hazard text transforms ----------------
+/* ---------------- Hazard text transforms ---------------- */
 function transformHazard(items: string[]): string[] {
   return items.map((it) => {
     if (it.includes('exercise “You Can Stop”') || it.includes('exercise "You Can Stop"')) {
@@ -205,7 +181,7 @@ function transformHazard(items: string[]): string[] {
   });
 }
 
-// ---------------- Equipment Condition (replace entire list) ----------------
+/* ---------------- Equipment Condition (replaced list) ---------------- */
 const EQUIPMENT_CONDITION_NEW = [
   'Equipment In-Service',
   'Equipment depressurized/drained',
@@ -216,24 +192,55 @@ const EQUIPMENT_CONDITION_NEW = [
   'Fall Protection Rescue Plan reviewed with employees',
 ];
 
-// ---------------- Special Conditions transforms (combine, rename, filter) ----------------
+/* ---------------- Special Conditions transforms & ordering ---------------- */
+function renameSC(item: string): string {
+  if (item === 'Fire resistant/blanket or barriers are in place') return 'Fire resistant blankets or barriers are in place';
+  if (item === 'Fire Watch required (assigned as course)') return 'Fire Watch required and assigned';
+  if (item === 'Fire extinguishers required') return 'Fire extinguishers readily accessible';
+  if (item === 'Audit for safety watch/spotter required') return 'Additional fire/safety watch/spotter required';
+  if (item === 'Ventilation as required') return 'Ventilation is adequate';
+  if (item === 'Multiple personnel plan or attendant required') return 'Multiple confined space attendants required';
+  if (item === 'Resource team required on site as a place') return 'Rescue team/equipment/plan on site and in place';
+  if (item === 'Ensure communication with committee has been documented') return 'Communication with entrants has been determined (Comm. Type: textbox)';
+  if (item === 'Use of special lifeline required') return 'Use of tripod/lifeline required';
+  // normalize firefighting row text variants to a single canonical string
+  if (item === 'Firefighting equipment inspected inspection current' || item === 'Firefighting equipment inspected/ inspection current') {
+    return 'Firefighting equipment inspected/ inspection current';
+  }
+  return item;
+}
+
 function buildSpecialConditionsList(left: string[], right: string[]): string[] {
-  const combined = [...left, ...right]
-    .map((it) => {
-      if (it === 'Fire resistant/blanket or barriers are in place') {
-        return 'Fire resistant blankets or barriers are in place';
-      }
-      if (it === 'Fire Watch required (assigned as course)') {
-        return 'Fire Watch required and assigned';
-      }
-      if (it === 'Fire extinguishers required') {
-        return 'Fire extinguishers readily accessible';
-      }
-      return it;
-    })
-    .filter((it) => it !== 'Vehicle engines turned off (TV Protection)');
-  // Remove duplicates if any
-  return Array.from(new Set(combined));
+  // combine, rename, filter
+  let combined = [...left, ...right]
+    .map(renameSC)
+    .filter((it) =>
+      it !== 'Vehicle engines turned off (TV Protection)' &&
+      it !== 'Stop all work and report unsafe conditions' &&
+      it.toLowerCase() !== 'other'
+    );
+
+  // ensure unique
+  combined = Array.from(new Set(combined));
+
+  const target = 'Firefighting equipment inspected/ inspection current';
+  const areaHazards = 'Area has been inspected for obvious hazards';
+  const preplan = 'Pre-plan inspection/guards required';
+  const damage = 'Damage controls/operations required';
+
+  // remove the three we will re-insert
+  combined = combined.filter((x) => ![areaHazards, preplan, damage].includes(x));
+
+  const idx = combined.indexOf(target);
+
+  if (idx >= 0) {
+    const before = combined.slice(0, idx + 1);
+    const after = combined.slice(idx + 1);
+    return [...before, areaHazards, preplan, damage, ...after];
+  }
+
+  // if target not found, put them near front
+  return [target, areaHazards, preplan, damage, ...combined.filter((x) => x !== target)];
 }
 
 export default function NewPermit() {
@@ -251,18 +258,14 @@ export default function NewPermit() {
     Array.from({ length: DYNAMIC_TIME_COLS }, () => '')
   );
 
-  // Build current date/time defaults (local)
+  // current date/time defaults
   const defaultDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const defaultTime = useMemo(() => new Date().toTimeString().slice(0, 5), []);
 
-  // Compute min time for "Time Issued" (no past time allowed for today)
+  // min time for Time Issued (no past time for today)
   const minTimeForDate = (dateStr: string): string => {
-    const today = new Date();
-    const todayStr = today.toISOString().slice(0, 10);
-    if (dateStr === todayStr) {
-      return today.toTimeString().slice(0, 5);
-    }
-    return '00:00';
+    const today = new Date().toISOString().slice(0, 10);
+    return dateStr === today ? new Date().toTimeString().slice(0, 5) : '00:00';
   };
 
   // Main form state
@@ -275,25 +278,24 @@ export default function NewPermit() {
     time_issued: defaultTime,
     date_expires: '',
     time_expires: '',
-    permit_types: {} as JsonMap,        // includes PRCS/NPRCS flags next to CONFINED SPACE
+    permit_types: {} as JsonMap,        // includes PRCS/NPRCS flags + extras like hotwork_exact_area
     ppe_requirements: {} as JsonMap,
     additional_ppe: {} as JsonMap,
-    // Combined section still saved into two JSON fields:
-    hazard_reduction: {} as JsonMap,     // { item: { yes: boolean, na: boolean }, other_text?, radio_channel? }
-    equipment_condition: {} as JsonMap,  // { item: { yes: boolean, na: boolean }, other_text? }
-    energy_control: {} as JsonMap,       // { zero_energy: boolean, personal_locks: boolean, lock_box_number: string }
-    special_conditions: {} as JsonMap,   // { item: { yes: boolean, na: boolean }, other_text? }
+    hazard_reduction: {} as JsonMap,     // { item: { yes, na }, other_text?, radio_channel? }
+    equipment_condition: {} as JsonMap,  // { item: { yes, na }, other_text? }
+    energy_control: {} as JsonMap,       // { zero_energy, personal_locks, lock_box_number }
+    special_conditions: {} as JsonMap,   // { item: { yes, na }, other_text?, comm_type? }
     additional_documents: {} as JsonMap,
-    air_monitoring: {} as JsonMap,       // table: { gas: { Initial, t1..tN } }
-    air_monitoring_headers: {} as JsonMap, // { t1: '10:00', ... }
-    instrument_info: {} as JsonMap,      // { make, model, serial, bump_tested: boolean|null, calibration_current: boolean|null }
+    air_monitoring: {} as JsonMap,       // { gas: { Initial, t1..t9 } }
+    air_monitoring_headers: {} as JsonMap,
+    instrument_info: {} as JsonMap,      // { make, model, serial, bump_tested, calibration_current }
     signatures: { issuer: '', receiver: '' } as JsonMap,
   });
 
-  // Permit number (YY####) — integer like 260001
+  // Permit number (YY####)
   const [nextPermitNumber, setNextPermitNumber] = useState<number | null>(null);
 
-  // ---------- Auth ----------
+  /* ---------- Auth ---------- */
   useEffect(() => {
     (async () => {
       const { data: auth } = await supabase.auth.getUser();
@@ -317,7 +319,7 @@ export default function NewPermit() {
     })();
   }, []);
 
-  // ---------- Init Air Monitoring grid ----------
+  /* ---------- Init Air Monitoring grid ---------- */
   useEffect(() => {
     setFormData(prev => {
       if (Object.keys(prev.air_monitoring ?? {}).length > 0) return prev;
@@ -334,7 +336,7 @@ export default function NewPermit() {
     });
   }, []);
 
-  // ---------- Helpers ----------
+  /* ---------- Helpers ---------- */
   const handleText = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -366,16 +368,12 @@ export default function NewPermit() {
       ...prev,
       [section]: {
         ...(prev[section] as JsonMap),
-        [key]: !((prev[section] as JsonMap)[key] ?? false)
-      }
+        [key]: !((prev[section] as JsonMap)[key] ?? false),
+      },
     }));
   };
 
-  const toggleNested = (
-    section: keyof typeof formData,
-    category: string,
-    key: string
-  ) => {
+  const toggleNested = (section: keyof typeof formData, category: string, key: string) => {
     setFormData(prev => {
       const sec = (prev[section] as JsonMap) ?? {};
       const cat = (sec[category] as JsonMap) ?? {};
@@ -385,9 +383,9 @@ export default function NewPermit() {
           ...sec,
           [category]: {
             ...cat,
-            [key]: !(cat[key] ?? false)
-          }
-        }
+            [key]: !(cat[key] ?? false),
+          },
+        },
       };
     });
   };
@@ -397,8 +395,8 @@ export default function NewPermit() {
       ...prev,
       [section]: {
         ...(prev[section] as JsonMap),
-        [key]: value
-      }
+        [key]: value,
+      },
     }));
   };
 
@@ -407,8 +405,8 @@ export default function NewPermit() {
       ...prev,
       air_monitoring: {
         ...prev.air_monitoring,
-        [gas]: { ...(prev.air_monitoring?.[gas] ?? {}), [colKey]: value }
-      }
+        [gas]: { ...(prev.air_monitoring?.[gas] ?? {}), [colKey]: value },
+      },
     }));
   };
 
@@ -422,12 +420,12 @@ export default function NewPermit() {
       ...prev,
       air_monitoring_headers: {
         ...prev.air_monitoring_headers,
-        [`t${idx + 1}`]: value
-      }
+        [`t${idx + 1}`]: value,
+      },
     }));
   };
 
-  // ---------- Auto "+12 hours" for Expires ----------
+  // "+12h" for Expires
   const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
   const fmtTime = (d: Date) => d.toTimeString().slice(0, 5);
 
@@ -446,18 +444,17 @@ export default function NewPermit() {
     }));
   }, [formData.date_issued, formData.time_issued]);
 
-  // ---------- Monitoring enabled if HOT WORK OR CONFINED SPACE (incl. PRCS/NPRCS) ----------
+  /* ---------- Monitoring enabled if HOT WORK OR CONFINED SPACE (incl. PRCS/NPRCS) ---------- */
   const monitoringEnabled = useMemo(() => {
     const anySelected = (keys: string[]) => keys?.some(k => !!formData.permit_types[k]);
-    const hotWorkSelected = anySelected(transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []));
-    const confinedSelected =
-      anySelected(transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? [])) ||
-      !!formData.permit_types?.PRCS ||
-      !!formData.permit_types?.NPRCS;
+    const hotList = transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []);
+    const confList = transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? []);
+    const hotWorkSelected = anySelected(hotList);
+    const confinedSelected = anySelected(confList) || !!formData.permit_types?.PRCS || !!formData.permit_types?.NPRCS;
     return hotWorkSelected || confinedSelected;
   }, [formData.permit_types]);
 
-  // ---------- Permit number YY#### ----------
+  /* ---------- Permit number YY#### ---------- */
   const yearPrefix = useMemo(() => {
     const d = formData.date_issued ? new Date(formData.date_issued) : new Date();
     return String(d.getFullYear() % 100).padStart(2, '0');
@@ -480,7 +477,6 @@ export default function NewPermit() {
         setNextPermitNumber(min + 1);
         return;
       }
-
       if (data && data.length > 0 && typeof data[0].permit_number === 'number') {
         setNextPermitNumber(data[0].permit_number + 1);
       } else {
@@ -489,12 +485,12 @@ export default function NewPermit() {
     })();
   }, [yearPrefix]);
 
-  // ---------- Submit (with back-dating validation on date+time) ----------
+  /* ---------- Submit (back-dating guard) ---------- */
   const handleSubmit = async () => {
     try {
       if (!userId) return alert('Not signed in');
 
-      // Back-date validation: disallow issued time before now if date is today
+      // Guard: issued cannot be in the past
       const issued = new Date(`${formData.date_issued}T${formData.time_issued}`);
       const nowLocal = new Date();
       if (isNaN(issued.getTime()) || issued.getTime() < nowLocal.getTime()) {
@@ -550,11 +546,15 @@ export default function NewPermit() {
     }
   };
 
-  // ---------- PPE transformed config ----------
+  /* ---------- PPE, Hazard & SC helpers ---------- */
   const PPE_RENDER = useMemo(() => buildPPERender(ADDITIONAL_PPE), []);
-
-  // ---------- Combined Hazard + Equipment (Yes/N/A per item) ----------
   const HAZ_LIST = useMemo(() => transformHazard(HAZARD_REDUCTION_ITEMS), []);
+  const SPECIAL_LIST = useMemo(
+    () => buildSpecialConditionsList(SPECIAL_CONDITION_REQUIREMENTS_LEFT, SPECIAL_CONDITION_REQUIREMENTS_RIGHT),
+    []
+  );
+
+  // Combined hazard/equipment Yes/NA togglers
   const setYesNA = (
     section: 'hazard_reduction' | 'equipment_condition',
     item: string,
@@ -570,17 +570,12 @@ export default function NewPermit() {
       return { ...prev, [section]: { ...sec, [item]: next } };
     });
   };
-
   const getYes = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
     !!(formData[section]?.[item]?.yes);
   const getNA = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
     !!(formData[section]?.[item]?.na);
 
-  // ---------- Special Conditions (Yes/N/A per item) ----------
-  const SPECIAL_LIST = useMemo(
-    () => buildSpecialConditionsList(SPECIAL_CONDITION_REQUIREMENTS_LEFT, SPECIAL_CONDITION_REQUIREMENTS_RIGHT),
-    []
-  );
+  // Special conditions Yes/NA togglers
   const setSCYesNA = (item: string, field: 'yes' | 'na', value: boolean) => {
     setFormData(prev => {
       const sc = (prev.special_conditions as JsonMap) ?? {};
@@ -594,7 +589,11 @@ export default function NewPermit() {
   const getSCYes = (item: string) => !!(formData.special_conditions?.[item]?.yes);
   const getSCNA  = (item: string) => !!(formData.special_conditions?.[item]?.na);
 
-  // ---------- UI ----------
+  // HOT WORK computed list and "any selected?" (for exact area textbox)
+  const hotWorkItems = useMemo(() => transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []), []);
+  const anyHotWorkSelected = hotWorkItems.some((it) => !!formData.permit_types[it]);
+
+  // Time min updates as date changes
   const minTime = minTimeForDate(formData.date_issued);
 
   return (
@@ -702,18 +701,19 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Permit Types (top row: HOT WORK + CONFINED SPACE) */}
+      {/* Permit Types */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Permit Types</div>
 
-        {/* Top row: HOT WORK & CONFINED SPACE side by side */}
+        {/* HOT WORK & CONFINED SPACE side-by-side */}
         <div className="p-3 grid md:grid-cols-2 gap-4">
           {/* HOT WORK */}
           <div className="border p-2 rounded">
             <div className="font-medium mb-2">HOT WORK</div>
             <div className="space-y-2">
-              {transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []).map((item) => {
+              {hotWorkItems.map((item) => {
                 const checked = !!(formData.permit_types as JsonMap)[item];
+                const isBurnBrazing = item === 'Burning/Brazing/Welding';
                 return (
                   <label key={item} className="flex items-center gap-2">
                     <input
@@ -721,10 +721,23 @@ export default function NewPermit() {
                       checked={checked}
                       onChange={() => toggleSimple('permit_types', item)}
                     />
-                    <span>{item}</span>
+                    <span className={isBurnBrazing ? 'text-red-600 font-semibold' : ''}>
+                      {item}
+                    </span>
                   </label>
                 );
               })}
+              {/* Exact area of Hot Work (appears if any hot work item is selected) */}
+              {anyHotWorkSelected && (
+                <div className="mt-2">
+                  <label className="font-medium">Exact area of Hot Work</label>
+                  <input
+                    className="mt-1 w-full border rounded px-2 py-1"
+                    value={(formData.permit_types?.hotwork_exact_area as string) ?? ''}
+                    onChange={(e) => setNestedText('permit_types', 'hotwork_exact_area', e.target.value)}
+                  />
+                </div>
+              )}
               <input
                 placeholder="Other (specify)"
                 className="mt-2 w-full border rounded px-2 py-1"
@@ -734,7 +747,7 @@ export default function NewPermit() {
             </div>
           </div>
 
-          {/* CONFINED SPACE (uppercased label) w/ PRCS/NPRCS mutually exclusive */}
+          {/* CONFINED SPACE (PRCS/NPRCS mutually exclusive) */}
           <div className="border p-2 rounded">
             <div className="font-medium mb-2 flex items-center gap-4">
               <span>CONFINED SPACE</span>
@@ -789,7 +802,7 @@ export default function NewPermit() {
           </div>
         </div>
 
-        {/* Remaining categories excluding VEHICLE_ENTRY, PRCS, NPRCS, DNCS, HOT_WORK, CONFINED_SPACE; replace GENERAL_WORK */}
+        {/* Remaining categories (excluding VEHICLE_ENTRY, PRCS/NPRCS, DNCS, HOT_WORK, CONFINED_SPACE); replace GENERAL WORK */}
         <div className="px-3 pb-3 grid md:grid-cols-2 gap-4">
           {/* GENERAL WORK (replaced list) */}
           <div className="border p-2 rounded">
@@ -853,7 +866,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* PPE (renamed & transformed) */}
+      {/* PPE */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">
           Personal Protective Equipment (Minimum PPE Requirements: Hard Hat, Safety Glasses, Gloves, Safety Toe Footwear, and Reflective Vest)
@@ -914,11 +927,10 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Combined: Hazard Reduction + Equipment Condition */}
+      {/* Combined: Hazard Reduction & Equipment Condition */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Hazard Reduction &amp; Equipment Condition</div>
         <div className="p-3 grid md:grid-cols-2 gap-6">
-
           {/* Hazard Reduction side */}
           <div>
             <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
@@ -929,7 +941,7 @@ export default function NewPermit() {
             <div className="space-y-1">
               {HAZ_LIST.map((item) => {
                 const isOther = item.toLowerCase().startsWith('other');
-                const isRadioComm = item === 'Radio communication';
+                const isRadio = item === 'Radio communication';
                 return (
                   <div key={item} className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1">
                     <div className="text-sm">{item}</div>
@@ -948,7 +960,6 @@ export default function NewPermit() {
                       />
                     </div>
 
-                    {/* Conditional inputs */}
                     {isOther && getYes('hazard_reduction', item) && (
                       <div className="col-span-3 mt-1">
                         <label className="text-sm font-medium">Other (specify)</label>
@@ -960,7 +971,7 @@ export default function NewPermit() {
                       </div>
                     )}
 
-                    {isRadioComm && getYes('hazard_reduction', item) && (
+                    {isRadio && getYes('hazard_reduction', item) && (
                       <div className="col-span-3 mt-1">
                         <label className="text-sm font-medium">Radio Channel #</label>
                         <input
@@ -976,7 +987,7 @@ export default function NewPermit() {
             </div>
           </div>
 
-          {/* Equipment Condition side (replaced list) */}
+          {/* Equipment Condition side */}
           <div>
             <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
               <div>Equipment Condition</div>
@@ -1019,25 +1030,15 @@ export default function NewPermit() {
               })}
             </div>
           </div>
-
         </div>
       </div>
 
-      {/* Energy Control (default N/A -> disabled); updated fields */}
-      <div
-        className={[
-          'border rounded',
-          energyNA ? 'opacity-60 pointer-events-none' : ''
-        ].join(' ')}
-      >
+      {/* Energy Control (N/A default) */}
+      <div className={['border rounded', energyNA ? 'opacity-60 pointer-events-none' : ''].join(' ')}>
         <div className="bg-kmGray px-3 py-2 font-semibold flex items-center justify-between">
           <span>Energy Control</span>
           <label className="text-sm flex items-center gap-2 pr-2 pointer-events-auto">
-            <input
-              type="checkbox"
-              checked={energyNA}
-              onChange={() => setEnergyNA(v => !v)}
-            />
+            <input type="checkbox" checked={energyNA} onChange={() => setEnergyNA(v => !v)} />
             N/A
           </label>
         </div>
@@ -1073,16 +1074,14 @@ export default function NewPermit() {
             <input
               className="mt-1 w-40 border rounded px-2 py-1"
               value={formData.energy_control.lock_box_number ?? ''}
-              onChange={(e) =>
-                setNestedText('energy_control', 'lock_box_number', e.target.value)
-              }
+              onChange={(e) => setNestedText('energy_control', 'lock_box_number', e.target.value)}
               disabled={energyNA}
             />
           </div>
         </div>
       </div>
 
-      {/* Special Conditions (Yes/N/A per item; header section removed) */}
+      {/* Special Conditions (Yes/N/A per item; ordered & renamed per request) */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Special Conditions</div>
         <div className="p-3">
@@ -1093,25 +1092,39 @@ export default function NewPermit() {
           </div>
 
           <div className="space-y-1">
-            {SPECIAL_LIST.map((item) => (
-              <div key={item} className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1">
-                <div className="text-sm">{item}</div>
-                <div className="flex justify-center">
-                  <input
-                    type="checkbox"
-                    checked={getSCYes(item)}
-                    onChange={(e) => setSCYesNA(item, 'yes', e.target.checked)}
-                  />
+            {SPECIAL_LIST.map((item) => {
+              const isCommRow = item === 'Communication with entrants has been determined (Comm. Type: textbox)';
+              return (
+                <div key={item} className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1">
+                  <div className="text-sm">{item}</div>
+                  <div className="flex justify-center">
+                    <input
+                      type="checkbox"
+                      checked={getSCYes(item)}
+                      onChange={(e) => setSCYesNA(item, 'yes', e.target.checked)}
+                    />
+                  </div>
+                  <div className="flex justify-center">
+                    <input
+                      type="checkbox"
+                      checked={getSCNA(item)}
+                      onChange={(e) => setSCYesNA(item, 'na', e.target.checked)}
+                    />
+                  </div>
+
+                  {isCommRow && getSCYes(item) && (
+                    <div className="col-span-3 mt-1">
+                      <label className="text-sm font-medium">Comm. Type</label>
+                      <input
+                        className="mt-1 w-56 border rounded px-2 py-1"
+                        value={(formData.special_conditions?.comm_type as string) ?? ''}
+                        onChange={(e) => setNestedText('special_conditions', 'comm_type', e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
-                <div className="flex justify-center">
-                  <input
-                    type="checkbox"
-                    checked={getSCNA(item)}
-                    onChange={(e) => setSCYesNA(item, 'na', e.target.checked)}
-                  />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="mt-3">
@@ -1126,17 +1139,12 @@ export default function NewPermit() {
       </div>
 
       {/* Air Monitoring (Perform continuous air monitoring, record hourly) */}
-      <div
-        className={[
-          'border rounded',
-          monitoringEnabled ? '' : 'opacity-60 pointer-events-none',
-        ].join(' ')}
-      >
+      <div className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}>
         <div className="bg-kmGray px-3 py-2 font-semibold">
           Air Monitoring (Perform continuous air monitoring, record hourly)
         </div>
         <div className="p-3 overflow-x-auto">
-          {/* VOC N/A: default checked; disables VOC row even when section enabled */}
+          {/* VOC N/A */}
           <div className="mb-2 text-sm flex items-center gap-4">
             <label className="flex items-center gap-1">
               <input
@@ -1208,16 +1216,11 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Instrument Info (condensed rows) */}
-      <div
-        className={[
-          'border rounded',
-          monitoringEnabled ? '' : 'opacity-60 pointer-events-none',
-        ].join(' ')}
-      >
+      {/* Instrument Info (condensed) */}
+      <div className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}>
         <div className="bg-kmGray px-3 py-2 font-semibold">Instrument Info</div>
         <div className="p-3 grid md:grid-cols-3 gap-4">
-          {/* Row: Make, Model, Serial */}
+          {/* Make, Model, Serial */}
           <div className="md:col-span-3 grid md:grid-cols-3 gap-4">
             <div>
               <label className="font-medium">Make</label>
@@ -1248,7 +1251,7 @@ export default function NewPermit() {
             </div>
           </div>
 
-          {/* Row: Bump Tested Before Use & Calibration Current */}
+          {/* Bump Tested + Calibration Current */}
           <div className="md:col-span-3 grid md:grid-cols-2 gap-4">
             <div className="flex items-center gap-6">
               <span className="font-medium">Bump Tested Before Use:</span>
