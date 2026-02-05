@@ -1140,7 +1140,7 @@ export default function NewPermit() {
 
           <div className="space-y-1">
             {SPECIAL_LIST.map((item) => {
-              const isComm = item === 'Communication with entrants has been determined (Comm. Type:)';
+              const isComm = item === 'Communication with entrants has been determined';
               const isFireWatch = item === 'Fire Watch required and assigned';
               const yes = getSCYes(item);
               const na  = getSCNA(item);
