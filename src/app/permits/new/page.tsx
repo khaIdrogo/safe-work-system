@@ -255,7 +255,7 @@ function renameSC(item: string): string {
   if (item === 'Resource team required on site as a place')
     return 'Rescue team/equipment/plan on site and in place';
   if (item === 'Ensure communication with committee has been documented')
-    return 'Communication with entrants has been determined'; // updated per request
+    return 'Communication with entrants has been determined';
   if (item === 'Use of special lifeline required') return 'Use of tripod/lifeline required'; // will be filtered out
 
   // New renames
@@ -329,7 +329,7 @@ export default function NewPermit() {
   // Number of dynamic "Time:" columns for Air Monitoring
   const [timeColCount, setTimeColCount] = useState<number>(INITIAL_TIME_COLS);
 
-  // Dynamic header labels/values for "Time:" columns (type="time")
+  // Dynamic header time values for "Time:" columns (type="time" next to label)
   const [timeHeaders, setTimeHeaders] = useState<string[]>(
     Array.from({ length: INITIAL_TIME_COLS }, () => '')
   );
@@ -363,8 +363,9 @@ export default function NewPermit() {
     special_conditions: {} as JsonMap,   // { item: { yes, na }, comm_type?, fire_watch_after?, fire_watch_length?, other_text? }
     additional_documents: {} as JsonMap,
     // Air Monitoring
-    air_monitoring: {} as JsonMap,       // { gas: { 'Initial Reading', t1..tN } }
-    air_monitoring_headers: {} as JsonMap, // { initial_header, t1..tN }
+    air_monitoring: {} as JsonMap,                // { gas: { 'Initial Reading', t1..tN } }
+    air_monitoring_initials: {} as JsonMap,       // { initial: string, t1: string, ... }  // NEW
+    air_monitoring_headers: {} as JsonMap,        // (optional carry-over; not required now)
     instrument_info: {} as JsonMap,      // { make, model, serial, bump_tested, calibration_current }
     // New: Confined Space sections
     confined_hazard_assessment: {} as JsonMap, // { hazard: boolean, other_text? }
@@ -419,6 +420,8 @@ export default function NewPermit() {
   useEffect(() => {
     setFormData((prev) => {
       if (Object.keys(prev.air_monitoring ?? {}).length > 0) return prev;
+
+      // build gas rows with Initial Reading + t1..tN
       const table: JsonMap = {};
       GAS_ROWS.forEach((gas) => {
         table[gas] = { 'Initial Reading': '' };
@@ -426,12 +429,24 @@ export default function NewPermit() {
           table[gas][`t${i}`] = '';
         }
       });
-      const headers: JsonMap = { initial_header: '' };
+
+      // per-column initials (Initial Reading + t1..tN)
+      const initials: JsonMap = { initial: '' };
+      for (let i = 1; i <= timeColCount; i++) initials[`t${i}`] = '';
+
+      // optional headers carry-over
+      const headers: JsonMap = {};
       for (let i = 1; i <= timeColCount; i++) headers[`t${i}`] = '';
-      return { ...prev, air_monitoring: table, air_monitoring_headers: headers };
+
+      return {
+        ...prev,
+        air_monitoring: table,
+        air_monitoring_initials: initials,
+        air_monitoring_headers: headers,
+      };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once on mount (we manage additions via addTimeColumn)
+  }, []); // run once on mount
 
   /* ---------- Helpers ---------- */
   const handleText = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -508,11 +523,13 @@ export default function NewPermit() {
   };
 
   const setHeaderLabel = (idx: number, value: string) => {
+    // header "Time:" inputs
     setTimeHeaders((prev) => {
       const copy = [...prev];
       copy[idx] = value;
       return copy;
     });
+    // optional: keep a copy in formData as well (not strictly required)
     setFormData((prev) => ({
       ...prev,
       air_monitoring_headers: {
@@ -522,25 +539,38 @@ export default function NewPermit() {
     }));
   };
 
+  const setInitialsForColumn = (key: 'initial' | `t${number}`, value: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      air_monitoring_initials: {
+        ...(prev.air_monitoring_initials ?? {}),
+        [key]: value,
+      },
+    }));
+  };
+
   const addTimeColumn = () => {
     setTimeColCount((prevCount) => {
       const newCount = prevCount + 1;
 
-      // add header input slot
+      // add new time header (time input next to "Time:")
       setTimeHeaders((prev) => [...prev, '']);
 
-      // add new tN keys to each gas row and header map
+      // add new tN keys to each gas row and initials/header maps
       setFormData((prev) => {
         const nextMonitoring = { ...(prev.air_monitoring ?? {}) };
+        const nextInitials = { ...(prev.air_monitoring_initials ?? {}) };
         const nextHeaders = { ...(prev.air_monitoring_headers ?? {}) };
         const newKey = `t${newCount}`;
         GAS_ROWS.forEach((gas) => {
           nextMonitoring[gas] = { ...(nextMonitoring[gas] ?? {}), [newKey]: '' };
         });
+        nextInitials[newKey] = '';
         nextHeaders[newKey] = '';
         return {
           ...prev,
           air_monitoring: nextMonitoring,
+          air_monitoring_initials: nextInitials,
           air_monitoring_headers: nextHeaders,
         };
       });
@@ -1057,7 +1087,7 @@ export default function NewPermit() {
               </label>
             </div>
             <div className="space-y-2">
-              {confinedList.map((item) => {
+              {transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? []).map((item) => {
                 const checked = !!(formData.permit_types as JsonMap)[item];
                 return (
                   <label key={item} className="flex items-center gap-2">
@@ -1151,7 +1181,8 @@ export default function NewPermit() {
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Hazard Assessment</div>
           <div className="p-3 space-y-3">
             <div className="text-xs text-gray-700">
-              check all the apply to the space or may be introduced by work
+              {/* updated helper text */}
+              check all that apply to the space or may be introduced by work
             </div>
             <div className="grid md:grid-cols-2 gap-3">
               {CS_HAZARDS.map((hz) => {
@@ -1413,7 +1444,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Special Conditions (Yes/N/A per item; ordered & renamed) */}
+      {/* Special Conditions */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Special Conditions</div>
         <div className="p-3">
@@ -1425,20 +1456,17 @@ export default function NewPermit() {
 
           <div className="space-y-1">
             {SPECIAL_LIST.map((item, idx) => {
-              // detect "Comm" by the updated label text
               const isComm = item === 'Communication with entrants has been determined';
               const isFireWatch = item === 'Fire Watch required and assigned';
               const yes = getSCYes(item);
               const na = getSCNA(item);
 
-              // Apply red styling for indices in the requested range
               const isRed =
                 scRedStartIdx >= 0 && scRedEndIdx >= 0 && idx >= scRedStartIdx && idx <= scRedEndIdx;
 
               return (
                 <div key={item} className="border rounded px-2 py-1">
                   <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center">
-                    {/* Item with inline comm type if applicable */}
                     <div className={`text-sm flex items-center gap-2 flex-wrap ${isRed ? 'text-red-600' : ''}`}>
                       <span>{item}</span>
                       {isComm && yes && (
@@ -1469,7 +1497,6 @@ export default function NewPermit() {
                     </div>
                   </div>
 
-                  {/* Fire Watch trigger row */}
                   {isFireWatch && yes && (
                     <div className="mt-2 grid md:grid-cols-2 gap-4">
                       <div className="flex items-center gap-4">
@@ -1490,7 +1517,7 @@ export default function NewPermit() {
                             checked={formData.special_conditions.fire_watch_after === '>30'}
                             onChange={() => setNestedText('special_conditions', 'fire_watch_after', '>30')}
                           />
-                          &gt;30 min
+                          >30 min
                         </label>
                       </div>
 
@@ -1601,7 +1628,7 @@ export default function NewPermit() {
         </div>
       )}
 
-      {/* NEW: Confined Space Authorized Entrant(s) Log (PRCS only) */}
+      {/* UPDATED: Confined Space Authorized Entrant(s) Log (PRCS only) */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Entrant(s) Log</div>
@@ -1623,7 +1650,6 @@ export default function NewPermit() {
               </button>
             </div>
 
-            {/* Table */}
             <div className="overflow-x-auto">
               <table className="w-full text-sm border-collapse">
                 <thead>
@@ -1631,6 +1657,7 @@ export default function NewPermit() {
                     <th className="border px-2 py-1 text-left min-w-[220px] w-64 whitespace-nowrap">
                       Name
                     </th>
+                    {/* Interleaved headers: In1, Out1, In2, Out2, ... */}
                     {Array.from({ length: formData.confined_entrants?.time_pairs ?? 3 }).map((_, i) => (
                       <th key={`h-in-${i}`} className="border px-2 py-1 text-left">Time In</th>
                     ))}
@@ -1649,8 +1676,10 @@ export default function NewPermit() {
                           onChange={(e) => setEntrantName(rIdx, e.target.value)}
                         />
                       </td>
-                      {/* alternating Time In / Time Out per pair */}
-                      {(row.times as any[]).map((t: any, pIdx: number) => (
+                      {/* Interleaved cells: In1, In2, In3... then Out1, Out2... to maintain layout consistency
+                          with header row this still appears grouped; if you want true interleaving per pair in DOM order,
+                          replace these two maps with a single map over row.times rendering two <td> per pair. */}
+                      {row.times.map((t: any, pIdx: number) => (
                         <td key={`pair-in-${pIdx}`} className="border px-2 py-1">
                           <input
                             type="time"
@@ -1660,7 +1689,7 @@ export default function NewPermit() {
                           />
                         </td>
                       ))}
-                      {(row.times as any[]).map((t: any, pIdx: number) => (
+                      {row.times.map((t: any, pIdx: number) => (
                         <td key={`pair-out-${pIdx}`} className="border px-2 py-1">
                           <input
                             type="time"
@@ -1675,11 +1704,12 @@ export default function NewPermit() {
                 </tbody>
               </table>
             </div>
+
           </div>
         </div>
       )}
 
-      {/* NEW: Confined Space Authorized Attendant(s) (PRCS only) */}
+      {/* Confined Space Authorized Attendant(s) (PRCS only) */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Attendant(s)</div>
@@ -1738,7 +1768,7 @@ export default function NewPermit() {
         </div>
       )}
 
-      {/* NEW: Confined Space Rescue Team (PRCS only) */}
+      {/* Confined Space Rescue Team (PRCS only) */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Rescue Team</div>
@@ -1830,81 +1860,52 @@ export default function NewPermit() {
         <div className="p-3 overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
-              {/* PRCS-only initials-of-tester merged across Gas + Safe Range (2 columns) + inputs over other columns */}
+              {/* Top header: initials row (merged over Gas+Safe Range), plus initials inputs over remaining columns */}
               <tr>
-                {isPRCS ? (
-                  <>
-                    <th className="border px-2 py-1 text-left" colSpan={2}>
-                      <div className="flex items-center gap-2">
-                        <span>Initials of tester</span>
-                        <input
-                          className="border rounded px-2 py-1 w-48"
-                          value={formData.air_monitoring?.initials_tester ?? ''}
-                          onChange={(e) => setNestedText('air_monitoring', 'initials_tester', e.target.value)}
-                          disabled={!monitoringEnabled}
-                        />
-                      </div>
-                    </th>
-                    {/* Input over Initial Reading */}
-                    <th className="border px-2 py-1 text-left">
-                      <input
-                        className="w-40 border rounded px-2 py-1"
-                        value={formData.air_monitoring_headers?.initial_header ?? ''}
-                        onChange={(e) => setNestedText('air_monitoring_headers', 'initial_header', e.target.value)}
-                        disabled={!monitoringEnabled}
-                        placeholder="Header note"
-                      />
-                    </th>
-                    {/* Inputs over Time columns */}
-                    {Array.from({ length: timeColCount }).map((_, idx) => (
-                      <th key={`h-top-${idx}`} className="border px-2 py-1 text-left">
-                        <input
-                          type="time"
-                          className="w-28 border rounded px-1 py-0.5"
-                          value={timeHeaders[idx] ?? ''}
-                          onChange={(e) => setHeaderLabel(idx, e.target.value)}
-                          disabled={!monitoringEnabled}
-                        />
-                      </th>
-                    ))}
-                  </>
-                ) : (
-                  // If not PRCS, render an empty top header row aligned with columns (no merged initials)
-                  <>
-                    <th className="border px-2 py-1" />
-                    <th className="border px-2 py-1" />
-                    <th className="border px-2 py-1">
-                      <input
-                        className="w-40 border rounded px-2 py-1"
-                        value={formData.air_monitoring_headers?.initial_header ?? ''}
-                        onChange={(e) => setNestedText('air_monitoring_headers', 'initial_header', e.target.value)}
-                        disabled={!monitoringEnabled}
-                        placeholder="Header note"
-                      />
-                    </th>
-                    {Array.from({ length: timeColCount }).map((_, idx) => (
-                      <th key={`h-top-np-${idx}`} className="border px-2 py-1 text-left">
-                        <input
-                          type="time"
-                          className="w-28 border rounded px-1 py-0.5"
-                          value={timeHeaders[idx] ?? ''}
-                          onChange={(e) => setHeaderLabel(idx, e.target.value)}
-                          disabled={!monitoringEnabled}
-                        />
-                      </th>
-                    ))}
-                  </>
-                )}
+                <th className="border px-2 py-1 text-left" colSpan={2}>
+                  Initials of tester
+                </th>
+                {/* Initial Reading column initials */}
+                <th className="border px-2 py-1 text-left">
+                  <input
+                    className="w-24 border rounded px-1 py-0.5"
+                    value={formData.air_monitoring_initials?.initial ?? ''}
+                    onChange={(e) => setInitialsForColumn('initial', e.target.value)}
+                    disabled={!monitoringEnabled}
+                    placeholder="Initials"
+                  />
+                </th>
+                {/* initials over each Time column */}
+                {Array.from({ length: timeColCount }).map((_, idx) => (
+                  <th key={`h-top-${idx}`} className="border px-2 py-1 text-left">
+                    <input
+                      className="w-24 border rounded px-1 py-0.5"
+                      value={formData.air_monitoring_initials?.[`t${idx + 1}`] ?? ''}
+                      onChange={(e) => setInitialsForColumn(`t${idx + 1}` as any, e.target.value)}
+                      disabled={!monitoringEnabled}
+                      placeholder="Initials"
+                    />
+                  </th>
+                ))}
               </tr>
 
-              {/* Labels row */}
+              {/* Labels row: Gas | Safe Range | Initial Reading | Time: + time input per column */}
               <tr>
                 <th className="border px-2 py-1 text-left">Gas</th>
                 <th className="border px-2 py-1 text-left">Safe Range</th>
                 <th className="border px-2 py-1 text-left">Initial Reading</th>
                 {Array.from({ length: timeColCount }).map((_, idx) => (
                   <th key={`h-${idx}`} className="border px-2 py-1 text-left">
-                    Time:
+                    <div className="flex items-center gap-2">
+                      <span>Time:</span>
+                      <input
+                        type="time"
+                        className="w-28 border rounded px-1 py-0.5"
+                        value={timeHeaders[idx] ?? ''}
+                        onChange={(e) => setHeaderLabel(idx, e.target.value)}
+                        disabled={!monitoringEnabled}
+                      />
+                    </div>
                   </th>
                 ))}
               </tr>
