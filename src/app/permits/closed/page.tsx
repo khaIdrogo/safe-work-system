@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { printPermitHtml } from '@/app/permits/printTemplate';
+import { printPermitHtml } from '@/lib/printTemplate';
 
 type PermitRow = {
   id: string;
