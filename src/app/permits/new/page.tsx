@@ -18,11 +18,11 @@ const DYNAMIC_TIME_COLS = 9; // editable "Time:" header columns (t1..t9)
 const GAS_ROWS = AIR_MONITORING_GASES.map(({ gas }) => gas);
 // Safe ranges (keys with special characters MUST be quoted)
 const SAFE_RANGE: Record<string, string> = {
-  'LEL': '<10%',
-  'O₂': '19.5-23.5%',
-  'H₂S': '<10ppm',
-  'CO': '<35ppm',
-  'VOC': '—',
+  LEL: '<10%',
+  O₂: '19.5-23.5%',
+  H₂S: '<10ppm',
+  CO: '<35ppm',
+  VOC: '—',
 };
 
 /* ---------------- Permit Types transforms ---------------- */
@@ -122,27 +122,35 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
       if (low === 'kmit two watch vest') return 'Chemical Suit';
       return it;
     })
-    .filter((it) => ![
-      'Material guards',
-      'H2S Monitor',
-      'Other PPE – Level A',
-      'Other PPE – Level B',
-      'Other PPE – Level C',
-    ].includes(it));
+    .filter(
+      (it) =>
+        ![
+          'Material guards',
+          'H2S Monitor',
+          'Other PPE – Level A',
+          'Other PPE – Level B',
+          'Other PPE – Level C',
+        ].includes(it)
+    );
 
   // OTHER SAFETY EQUIPMENT
   const otherOrig = additionalPpe.OTHER ?? [];
   const otherItems = otherOrig
-    .map((it) => (it === 'Intentionally Split equip / 12 volt lighting' ? 'Intrinsically Safe Equipment' : it))
-    .filter((it) => ![
-      'Descent Device',
-      'X Ray barricades',
-      'X-Ray barricades',
-      'Rail Switch Locks',
-      'Blue Flag / Derailer',
-      'Other',
-      'Other Special PPE',
-    ].includes(it));
+    .map((it) =>
+      it === 'Intentionally Split equip / 12 volt lighting' ? 'Intrinsically Safe Equipment' : it
+    )
+    .filter(
+      (it) =>
+        ![
+          'Descent Device',
+          'X Ray barricades',
+          'X-Ray barricades',
+          'Rail Switch Locks',
+          'Blue Flag / Derailer',
+          'Other',
+          'Other Special PPE',
+        ].includes(it)
+    );
 
   return [
     {
@@ -186,7 +194,8 @@ function transformHazard(items: string[]): string[] {
       return 'Muster Points/ Emergency Exits identified';
     }
     if (it === 'Multi-unit work discussed') return 'Multi-Craft work discussed';
-    if (it.startsWith('Area barricaded required')) return 'Area barricade required (overhead work, regulated areas, etc.)';
+    if (it.startsWith('Area barricaded required'))
+      return 'Area barricade required (overhead work, regulated areas, etc.)';
     if (it === 'Grounding bonding required') return 'Grounding/bonding required';
     if (it.startsWith('Radio communication')) return 'Radio communication';
     return it;
@@ -217,22 +226,18 @@ function renameSC(item: string): string {
   // Existing & previous renames
   if (item === 'Fire resistant/blanket or barriers are in place')
     return 'Fire resistant blankets or barriers are in place';
-  if (item === 'Fire Watch required (assigned as course)')
-    return 'Fire Watch required and assigned';
-  if (item === 'Fire extinguishers required')
-    return 'Fire extinguishers readily accessible';
+  if (item === 'Fire Watch required (assigned as course)') return 'Fire Watch required and assigned';
+  if (item === 'Fire extinguishers required') return 'Fire extinguishers readily accessible';
   if (item === 'Audit for safety watch/spotter required')
     return 'Additional fire/safety watch/spotter required';
-  if (item === 'Ventilation as required')
-    return 'Ventilation is adequate';
+  if (item === 'Ventilation as required') return 'Ventilation is adequate';
   if (item === 'Multiple personnel plan or attendant required')
     return 'Multiple confined space attendants required';
   if (item === 'Resource team required on site as a place')
     return 'Rescue team/equipment/plan on site and in place';
   if (item === 'Ensure communication with committee has been documented')
-    return 'Communication with entrants has been determined (Comm. Type:)';
-  if (item === 'Use of special lifeline required')
-    return 'Use of tripod/lifeline required';
+    return 'Communication with entrants has been determined'; // <-- UPDATED
+  if (item === 'Use of special lifeline required') return 'Use of tripod/lifeline required';
 
   // New renames
   if (item === 'Pre-plan inspection/guards required')
@@ -281,7 +286,14 @@ function buildSpecialConditionsList(left: string[], right: string[]): string[] {
   }
 
   // If target not found, place the block at the front
-  return [target, areaHazards, wallFloor, flamRemoved, fireWatch, ...combined.filter((x) => x !== target)];
+  return [
+    target,
+    areaHazards,
+    wallFloor,
+    flamRemoved,
+    fireWatch,
+    ...combined.filter((x) => x !== target),
+  ];
 }
 
 export default function NewPermit() {
@@ -319,17 +331,17 @@ export default function NewPermit() {
     time_issued: defaultTime,
     date_expires: '',
     time_expires: '',
-    permit_types: {} as JsonMap,        // includes PRCS/NPRCS + hotwork_exact_area/hotwork_other
+    permit_types: {} as JsonMap, // includes PRCS/NPRCS + hotwork_exact_area/hotwork_other
     ppe_requirements: {} as JsonMap,
     additional_ppe: {} as JsonMap,
-    hazard_reduction: {} as JsonMap,     // { item: { yes, na }, other_text?, radio_channel? }
-    equipment_condition: {} as JsonMap,  // { item: { yes, na }, other_text? }
-    energy_control: {} as JsonMap,       // { zero_energy, personal_locks, lock_box_number }
-    special_conditions: {} as JsonMap,   // { item: { yes, na }, comm_type?, fire_watch_after?, fire_watch_length?, other_text? }
+    hazard_reduction: {} as JsonMap, // { item: { yes, na }, other_text?, radio_channel? }
+    equipment_condition: {} as JsonMap, // { item: { yes, na }, other_text? }
+    energy_control: {} as JsonMap, // { zero_energy, personal_locks, lock_box_number }
+    special_conditions: {} as JsonMap, // { item: { yes, na }, comm_type?, fire_watch_after?, fire_watch_length?, other_text? }
     additional_documents: {} as JsonMap,
-    air_monitoring: {} as JsonMap,       // { gas: { Initial, t1..t9 } }
+    air_monitoring: {} as JsonMap, // { gas: { Initial, t1..t9 } }
     air_monitoring_headers: {} as JsonMap,
-    instrument_info: {} as JsonMap,      // { make, model, serial, bump_tested, calibration_current }
+    instrument_info: {} as JsonMap, // { make, model, serial, bump_tested, calibration_current }
     signatures: { issuer: '', receiver: '' } as JsonMap,
   });
 
@@ -347,11 +359,7 @@ export default function NewPermit() {
       }
       setUserId(uid);
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', uid)
-        .single();
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', uid).single();
 
       if (!profile || (profile.role !== 'admin' && profile.role !== 'permit_writer')) {
         alert('Access denied. Requires admin or permit writer.');
@@ -362,10 +370,10 @@ export default function NewPermit() {
 
   /* ---------- Init Air Monitoring grid ---------- */
   useEffect(() => {
-    setFormData(prev => {
+    setFormData((prev) => {
       if (Object.keys(prev.air_monitoring ?? {}).length > 0) return prev;
       const table: JsonMap = {};
-      GAS_ROWS.forEach(gas => {
+      GAS_ROWS.forEach((gas) => {
         table[gas] = { Initial: '' };
         for (let i = 1; i <= DYNAMIC_TIME_COLS; i++) {
           table[gas][`t${i}`] = '';
@@ -380,12 +388,12 @@ export default function NewPermit() {
   /* ---------- Helpers ---------- */
   const handleText = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleDateIssued = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    setFormData(prev => {
+    setFormData((prev) => {
       const minTime = minTimeForDate(value);
       let timeIssued = prev.time_issued;
       if (value === defaultDate && timeIssued < minTime) {
@@ -397,7 +405,7 @@ export default function NewPermit() {
 
   const handleTimeIssued = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    setFormData(prev => {
+    setFormData((prev) => {
       const minTime = minTimeForDate(prev.date_issued);
       const coerced = value < minTime ? minTime : value;
       return { ...prev, time_issued: coerced };
@@ -405,7 +413,7 @@ export default function NewPermit() {
   };
 
   const toggleSimple = (section: keyof typeof formData, key: string) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       [section]: {
         ...(prev[section] as JsonMap),
@@ -415,7 +423,7 @@ export default function NewPermit() {
   };
 
   const toggleNested = (section: keyof typeof formData, category: string, key: string) => {
-    setFormData(prev => {
+    setFormData((prev) => {
       const sec = (prev[section] as JsonMap) ?? {};
       const cat = (sec[category] as JsonMap) ?? {};
       return {
@@ -432,7 +440,7 @@ export default function NewPermit() {
   };
 
   const setNestedText = (section: keyof typeof formData, key: string, value: string | boolean) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       [section]: {
         ...(prev[section] as JsonMap),
@@ -442,7 +450,7 @@ export default function NewPermit() {
   };
 
   const setAirCell = (gas: string, colKey: string, value: string) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       air_monitoring: {
         ...prev.air_monitoring,
@@ -452,12 +460,12 @@ export default function NewPermit() {
   };
 
   const setHeaderLabel = (idx: number, value: string) => {
-    setTimeHeaders(prev => {
+    setTimeHeaders((prev) => {
       const copy = [...prev];
       copy[idx] = value;
       return copy;
     });
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       air_monitoring_headers: {
         ...prev.air_monitoring_headers,
@@ -478,7 +486,7 @@ export default function NewPermit() {
     if (isNaN(start.getTime())) return;
 
     const end = new Date(start.getTime() + 12 * 60 * 60 * 1000);
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       date_expires: fmtDate(end),
       time_expires: fmtTime(end),
@@ -490,7 +498,7 @@ export default function NewPermit() {
   const anyHotWorkSelected = hotWorkItems.some((it) => !!formData.permit_types[it]);
 
   const monitoringEnabled = useMemo(() => {
-    const anySelected = (keys: string[]) => keys?.some(k => !!formData.permit_types[k]);
+    const anySelected = (keys: string[]) => keys?.some((k) => !!formData.permit_types[k]);
     const confList = transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? []);
     const hotWorkSelected = anySelected(hotWorkItems);
     const confinedSelected =
@@ -594,9 +602,20 @@ export default function NewPermit() {
   const PPE_RENDER = useMemo(() => buildPPERender(ADDITIONAL_PPE), []);
   const HAZ_LIST = useMemo(() => transformHazard(HAZARD_REDUCTION_ITEMS), []);
   const SPECIAL_LIST = useMemo(
-    () => buildSpecialConditionsList(SPECIAL_CONDITION_REQUIREMENTS_LEFT, SPECIAL_CONDITION_REQUIREMENTS_RIGHT),
+    () =>
+      buildSpecialConditionsList(
+        SPECIAL_CONDITION_REQUIREMENTS_LEFT,
+        SPECIAL_CONDITION_REQUIREMENTS_RIGHT
+      ),
     []
   );
+
+  // Compute the "red range" once: items 1-11 (inclusive) by label anchors
+  const { scRedStartIdx, scRedEndIdx } = useMemo(() => {
+    const start = SPECIAL_LIST.indexOf('100% spark containment required');
+    const end = SPECIAL_LIST.indexOf('No unusual odors/vapors present');
+    return { scRedStartIdx: start, scRedEndIdx: end };
+  }, [SPECIAL_LIST]);
 
   // Combined hazard/equipment Yes/NA togglers
   const setYesNA = (
@@ -605,7 +624,7 @@ export default function NewPermit() {
     field: 'yes' | 'na',
     value: boolean
   ) => {
-    setFormData(prev => {
+    setFormData((prev) => {
       const sec = (prev[section] as JsonMap) ?? {};
       const cur = (sec[item] as JsonMap) ?? { yes: false, na: false };
       const next = { ...cur, [field]: value };
@@ -615,13 +634,13 @@ export default function NewPermit() {
     });
   };
   const getYes = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
-    !!(formData[section]?.[item]?.yes);
+    !!formData[section]?.[item]?.yes;
   const getNA = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
-    !!(formData[section]?.[item]?.na);
+    !!formData[section]?.[item]?.na;
 
   // Special conditions Yes/NA togglers
   const setSCYesNA = (item: string, field: 'yes' | 'na', value: boolean) => {
-    setFormData(prev => {
+    setFormData((prev) => {
       const sc = (prev.special_conditions as JsonMap) ?? {};
       const cur = (sc[item] as JsonMap) ?? { yes: false, na: false };
       const next = { ...cur, [field]: value };
@@ -630,8 +649,8 @@ export default function NewPermit() {
       return { ...prev, special_conditions: { ...sc, [item]: next } };
     });
   };
-  const getSCYes = (item: string) => !!(formData.special_conditions?.[item]?.yes);
-  const getSCNA  = (item: string) => !!(formData.special_conditions?.[item]?.na);
+  const getSCYes = (item: string) => !!formData.special_conditions?.[item]?.yes;
+  const getSCNA = (item: string) => !!formData.special_conditions?.[item]?.na;
 
   // Time min updates as date changes
   const minTime = minTimeForDate(formData.date_issued);
@@ -644,9 +663,7 @@ export default function NewPermit() {
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Permit Number</div>
         <div className="p-3">
-          <div className="text-2xl font-bold">
-            {nextPermitNumber ?? `${yearPrefix}0001`}
-          </div>
+          <div className="text-2xl font-bold">{nextPermitNumber ?? `${yearPrefix}0001`}</div>
         </div>
       </div>
 
@@ -753,11 +770,7 @@ export default function NewPermit() {
             <div className="space-y-2">
               {hotWorkItems.map((item) => {
                 const checked = !!(formData.permit_types as JsonMap)[item];
-                const redItems = new Set([
-                  'Burning/Brazing/Welding',
-                  'Grinding/Cutting',
-                  'Use of torch',
-                ]);
+                const redItems = new Set(['Burning/Brazing/Welding', 'Grinding/Cutting', 'Use of torch']);
                 return (
                   <label key={item} className="flex items-center gap-2">
                     <input
@@ -765,9 +778,7 @@ export default function NewPermit() {
                       checked={checked}
                       onChange={() => toggleSimple('permit_types', item)}
                     />
-                    <span className={redItems.has(item) ? 'text-red-600 font-semibold' : ''}>
-                      {item}
-                    </span>
+                    <span className={redItems.has(item) ? 'text-red-600 font-semibold' : ''}>{item}</span>
                   </label>
                 );
               })}
@@ -803,9 +814,13 @@ export default function NewPermit() {
                   type="checkbox"
                   checked={!!formData.permit_types.PRCS}
                   onChange={() =>
-                    setFormData(prev => ({
+                    setFormData((prev) => ({
                       ...prev,
-                      permit_types: { ...(prev.permit_types ?? {}), PRCS: !prev.permit_types?.PRCS, NPRCS: false }
+                      permit_types: {
+                        ...(prev.permit_types ?? {}),
+                        PRCS: !prev.permit_types?.PRCS,
+                        NPRCS: false,
+                      },
                     }))
                   }
                 />
@@ -816,9 +831,13 @@ export default function NewPermit() {
                   type="checkbox"
                   checked={!!formData.permit_types.NPRCS}
                   onChange={() =>
-                    setFormData(prev => ({
+                    setFormData((prev) => ({
                       ...prev,
-                      permit_types: { ...(prev.permit_types ?? {}), NPRCS: !prev.permit_types?.NPRCS, PRCS: false }
+                      permit_types: {
+                        ...(prev.permit_types ?? {}),
+                        NPRCS: !prev.permit_types?.NPRCS,
+                        PRCS: false,
+                      },
                     }))
                   }
                 />
@@ -879,8 +898,11 @@ export default function NewPermit() {
 
           {/* Other remaining categories */}
           {Object.entries(PERMIT_TYPES)
-            .filter(([key]) =>
-              !['VEHICLE_ENTRY', 'PRCS', 'NPRCS', 'DNCS', 'HOT_WORK', 'CONFINED_SPACE', 'GENERAL_WORK'].includes(key)
+            .filter(
+              ([key]) =>
+                !['VEHICLE_ENTRY', 'PRCS', 'NPRCS', 'DNCS', 'HOT_WORK', 'CONFINED_SPACE', 'GENERAL_WORK'].includes(
+                  key
+                )
             )
             .map(([category, items]) => (
               <div key={category} className="border p-2 rounded">
@@ -903,9 +925,7 @@ export default function NewPermit() {
                     placeholder="Other (specify)"
                     className="mt-2 w-full border rounded px-2 py-1"
                     value={(formData.permit_types?.[`${category}_other`] as string) ?? ''}
-                    onChange={(e) =>
-                      setNestedText('permit_types', `${category}_other`, e.target.value)
-                    }
+                    onChange={(e) => setNestedText('permit_types', `${category}_other`, e.target.value)}
                   />
                 </div>
               </div>
@@ -916,7 +936,8 @@ export default function NewPermit() {
       {/* PPE */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">
-          Personal Protective Equipment (Minimum PPE Requirements: Hard Hat, Safety Glasses, Gloves, Safety Toe Footwear, and Reflective Vest)
+          Personal Protective Equipment (Minimum PPE Requirements: Hard Hat, Safety Glasses, Gloves,
+          Safety Toe Footwear, and Reflective Vest)
         </div>
         <div className="p-3 grid md:grid-cols-2 gap-4">
           {PPE_RENDER.map(({ key, label, items, postInputs }) => {
@@ -951,15 +972,15 @@ export default function NewPermit() {
                           value={(catObj?.[pi.key] as string) ?? ''}
                           onChange={(e) => {
                             const val = e.target.value;
-                            setFormData(prev => {
+                            setFormData((prev) => {
                               const sec = (prev.additional_ppe as JsonMap) ?? {};
                               const origCat = sec[key] ?? {};
                               return {
                                 ...prev,
                                 additional_ppe: {
                                   ...sec,
-                                  [key]: { ...origCat, [pi.key]: val }
-                                }
+                                  [key]: { ...origCat, [pi.key]: val },
+                                },
                               };
                             });
                           }}
@@ -990,7 +1011,10 @@ export default function NewPermit() {
                 const isOther = item.toLowerCase().startsWith('other');
                 const isRadio = item === 'Radio communication';
                 return (
-                  <div key={item} className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1">
+                  <div
+                    key={item}
+                    className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1"
+                  >
                     <div className="text-sm">{item}</div>
                     <div className="flex justify-center">
                       <input
@@ -1045,7 +1069,10 @@ export default function NewPermit() {
               {EQUIPMENT_CONDITION_NEW.map((item) => {
                 const isOther = item.toLowerCase().startsWith('other');
                 return (
-                  <div key={item} className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1">
+                  <div
+                    key={item}
+                    className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1"
+                  >
                     <div className="text-sm">{item}</div>
                     <div className="flex justify-center">
                       <input
@@ -1085,7 +1112,7 @@ export default function NewPermit() {
         <div className="bg-kmGray px-3 py-2 font-semibold flex items-center justify-between">
           <span>Energy Control</span>
           <label className="text-sm flex items-center gap-2 pr-2 pointer-events-auto">
-            <input type="checkbox" checked={energyNA} onChange={() => setEnergyNA(v => !v)} />
+            <input type="checkbox" checked={energyNA} onChange={() => setEnergyNA((v) => !v)} />
             N/A
           </label>
         </div>
@@ -1096,7 +1123,9 @@ export default function NewPermit() {
               <input
                 type="checkbox"
                 checked={!!formData.energy_control.zero_energy}
-                onChange={() => setNestedText('energy_control', 'zero_energy', !(formData.energy_control?.zero_energy))}
+                onChange={() =>
+                  setNestedText('energy_control', 'zero_energy', !formData.energy_control?.zero_energy)
+                }
                 disabled={energyNA}
               />
               <span>Yes</span>
@@ -1109,7 +1138,13 @@ export default function NewPermit() {
               <input
                 type="checkbox"
                 checked={!!formData.energy_control.personal_locks}
-                onChange={() => setNestedText('energy_control', 'personal_locks', !(formData.energy_control?.personal_locks))}
+                onChange={() =>
+                  setNestedText(
+                    'energy_control',
+                    'personal_locks',
+                    !formData.energy_control?.personal_locks
+                  )
+                }
                 disabled={energyNA}
               />
               <span>Yes</span>
@@ -1139,17 +1174,22 @@ export default function NewPermit() {
           </div>
 
           <div className="space-y-1">
-            {SPECIAL_LIST.map((item) => {
-              const isComm = item === 'Communication with entrants has been determined (Comm. Type:)';
+            {SPECIAL_LIST.map((item, idx) => {
+              // UPDATED: detect "Comm" by the new label text (without suffix)
+              const isComm = item === 'Communication with entrants has been determined';
               const isFireWatch = item === 'Fire Watch required and assigned';
               const yes = getSCYes(item);
-              const na  = getSCNA(item);
+              const na = getSCNA(item);
+
+              // Apply red styling for indices in the requested range
+              const isRed =
+                scRedStartIdx >= 0 && scRedEndIdx >= 0 && idx >= scRedStartIdx && idx <= scRedEndIdx;
 
               return (
                 <div key={item} className="border rounded px-2 py-1">
                   <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center">
                     {/* Item with inline comm type if applicable */}
-                    <div className="text-sm flex items-center gap-2 flex-wrap">
+                    <div className={`text-sm flex items-center gap-2 flex-wrap ${isRed ? 'text-red-600' : ''}`}>
                       <span>{item}</span>
                       {isComm && yes && (
                         <span className="flex items-center gap-1">
@@ -1210,7 +1250,9 @@ export default function NewPermit() {
                           <input
                             className="w-24 border rounded px-2 py-0.5"
                             value={(formData.special_conditions.fire_watch_length as string) ?? ''}
-                            onChange={(e) => setNestedText('special_conditions', 'fire_watch_length', e.target.value)}
+                            onChange={(e) =>
+                              setNestedText('special_conditions', 'fire_watch_length', e.target.value)
+                            }
                           />
                         </div>
                       )}
@@ -1233,7 +1275,9 @@ export default function NewPermit() {
       </div>
 
       {/* Air Monitoring (Perform continuous air monitoring, record hourly) */}
-      <div className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}>
+      <div
+        className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}
+      >
         <div className="bg-kmGray px-3 py-2 font-semibold">
           Air Monitoring (Perform continuous air monitoring, record hourly)
         </div>
@@ -1244,7 +1288,7 @@ export default function NewPermit() {
               <input
                 type="checkbox"
                 checked={vocNA}
-                onChange={() => setVocNA(v => !v)}
+                onChange={() => setVocNA((v) => !v)}
                 disabled={!monitoringEnabled}
               />
               VOC N/A
@@ -1311,7 +1355,9 @@ export default function NewPermit() {
       </div>
 
       {/* Instrument Info (condensed) */}
-      <div className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}>
+      <div
+        className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}
+      >
         <div className="bg-kmGray px-3 py-2 font-semibold">Instrument Info</div>
         <div className="p-3 grid md:grid-cols-3 gap-4">
           {/* Make, Model, Serial */}
@@ -1405,9 +1451,9 @@ export default function NewPermit() {
               className="mt-1 w-full border rounded px-2 py-1"
               value={formData.signatures.issuer}
               onChange={(e) =>
-                setFormData(prev => ({
+                setFormData((prev) => ({
                   ...prev,
-                  signatures: { ...(prev.signatures ?? {}), issuer: e.target.value }
+                  signatures: { ...(prev.signatures ?? {}), issuer: e.target.value },
                 }))
               }
             />
@@ -1419,9 +1465,9 @@ export default function NewPermit() {
               className="mt-1 w-full border rounded px-2 py-1"
               value={formData.signatures.receiver}
               onChange={(e) =>
-                setFormData(prev => ({
+                setFormData((prev) => ({
                   ...prev,
-                  signatures: { ...(prev.signatures ?? {}), receiver: e.target.value }
+                  signatures: { ...(prev.signatures ?? {}), receiver: e.target.value },
                 }))
               }
             />
@@ -1438,10 +1484,7 @@ export default function NewPermit() {
         >
           {loading ? 'Submitting...' : 'Submit'}
         </button>
-        <button
-          onClick={() => window.history.back()}
-          className="bg-kmRed text-white px-4 py-2 rounded"
-        >
+        <button onClick={() => window.history.back()} className="bg-kmRed text-white px-4 py-2 rounded">
           Cancel
         </button>
       </div>
