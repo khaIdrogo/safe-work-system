@@ -255,7 +255,7 @@ function renameSC(item: string): string {
   if (item === 'Resource team required on site as a place')
     return 'Rescue team/equipment/plan on site and in place';
   if (item === 'Ensure communication with committee has been documented')
-    return 'Communication with entrants has been determined'; // updated per request
+    return 'Communication with entrants has been determined';
   if (item === 'Use of special lifeline required') return 'Use of tripod/lifeline required'; // will be filtered out
 
   // New renames
@@ -283,7 +283,7 @@ function buildSpecialConditionsList(left: string[], right: string[]): string[] {
         it !== 'Stop all work and report unsafe conditions' &&
         it.toLowerCase() !== 'other' &&
         it !== 'Operational activity considered' &&
-        it !== 'Use of tripod/lifeline required' // removed per request
+        it !== 'Use of tripod/lifeline required'
     );
 
   // unique
@@ -364,7 +364,7 @@ export default function NewPermit() {
     additional_documents: {} as JsonMap,
     // Air Monitoring
     air_monitoring: {} as JsonMap,                // { gas: { 'Initial Reading', t1..tN } }
-    air_monitoring_initials: {} as JsonMap,       // { initial: string, t1: string, ... }  // per-column initials
+    air_monitoring_initials: {} as JsonMap,       // { initial: string, t1: string, ... }
     air_monitoring_headers: {} as JsonMap,        // optional carry-over; not required now
     instrument_info: {} as JsonMap,      // { make, model, serial, bump_tested, calibration_current }
     // New: Confined Space sections
@@ -1175,7 +1175,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* NEW: Confined Space Hazard Assessment (PRCS only) */}
+      {/* PRCS-only: Confined Space Hazard Assessment */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Hazard Assessment</div>
@@ -1275,7 +1275,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Combined: Hazard Reduction & Equipment Condition */}
+      {/* Hazard Reduction & Equipment Condition */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Hazard Reduction &amp; Equipment Condition</div>
         <div className="p-3 grid md:grid-cols-2 gap-6">
@@ -1550,7 +1550,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* NEW: Confined Space Rescue Plan (PRCS only) */}
+      {/* PRCS-only: Confined Space Rescue Plan */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Rescue Plan</div>
@@ -1627,7 +1627,7 @@ export default function NewPermit() {
         </div>
       )}
 
-      {/* UPDATED: Confined Space Authorized Entrant(s) Log (PRCS only) */}
+      {/* PRCS-only: Confined Space Authorized Entrant(s) Log — INTERLEAVED */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Entrant(s) Log</div>
@@ -1657,12 +1657,10 @@ export default function NewPermit() {
                       Name
                     </th>
                     {/* Interleaved headers: In1, Out1, In2, Out2, ... */}
-                    {Array.from({ length: formData.confined_entrants?.time_pairs ?? 3 }).map((_, i) => (
-                      <th key={`h-pair-in-${i}`} className="border px-2 py-1 text-left">Time In</th>
-                    ))}
-                    {Array.from({ length: formData.confined_entrants?.time_pairs ?? 3 }).map((_, i) => (
-                      <th key={`h-pair-out-${i}`} className="border px-2 py-1 text-left">Time Out</th>
-                    ))}
+                    {Array.from({ length: formData.confined_entrants?.time_pairs ?? 3 }).flatMap((_, i) => [
+                      <th key={`h-in-${i}`} className="border px-2 py-1 text-left">Time In</th>,
+                      <th key={`h-out-${i}`} className="border px-2 py-1 text-left">Time Out</th>,
+                    ])}
                   </tr>
                 </thead>
                 <tbody>
@@ -1676,26 +1674,24 @@ export default function NewPermit() {
                         />
                       </td>
                       {/* Interleaved cells: In1, Out1, In2, Out2, ... */}
-                      {row.times.map((t: any, pIdx: number) => (
-                        <td key={`pair-in-${pIdx}`} className="border px-2 py-1">
+                      {row.times.flatMap((t: any, pIdx: number) => [
+                        <td key={`in-${rIdx}-${pIdx}`} className="border px-2 py-1">
                           <input
                             type="time"
                             className="w-full border rounded px-2 py-1"
                             value={t.in}
                             onChange={(e) => setEntrantTime(rIdx, pIdx, 'in', e.target.value)}
                           />
-                        </td>
-                      ))}
-                      {row.times.map((t: any, pIdx: number) => (
-                        <td key={`pair-out-${pIdx}`} className="border px-2 py-1">
+                        </td>,
+                        <td key={`out-${rIdx}-${pIdx}`} className="border px-2 py-1">
                           <input
                             type="time"
                             className="w-full border rounded px-2 py-1"
                             value={t.out}
                             onChange={(e) => setEntrantTime(rIdx, pIdx, 'out', e.target.value)}
                           />
-                        </td>
-                      ))}
+                        </td>,
+                      ])}
                     </tr>
                   ))}
                 </tbody>
@@ -1706,7 +1702,7 @@ export default function NewPermit() {
         </div>
       )}
 
-      {/* Confined Space Authorized Attendant(s) (PRCS only) */}
+      {/* PRCS-only: Confined Space Authorized Attendant(s) */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Attendant(s)</div>
@@ -1765,7 +1761,7 @@ export default function NewPermit() {
         </div>
       )}
 
-      {/* Confined Space Rescue Team (PRCS only) */}
+      {/* PRCS-only: Confined Space Rescue Team */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Rescue Team</div>
