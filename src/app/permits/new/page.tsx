@@ -82,29 +82,57 @@ function uniq<T>(arr: T[]) {
   return Array.from(new Set(arr));
 }
 
+function normalizeHeadItem(it: string): string {
+  const low = it.trim().toLowerCase();
+  if (low.includes('clamping')) return 'Cutting Goggles (Torch)';
+  if (low === 'full face*') return ''; // remove
+  if (low === 'hearing prot.') return 'Hearing Protection';
+  if (low === 'double hearing protect') return 'Double Hearing Protection';
+  if (low === 'half face*') return 'Half Face Respirator*';
+  return it;
+}
+
 function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
   // HEAD/FACE/RESPIRATORY from HAND_FACE_RESPIRATORY
   const headOrig = additionalPpe.HAND_FACE_RESPIRATORY ?? [];
-  const headItems = headOrig
-    .map((it) => {
-      const low = it.toLowerCase();
-      if (low.includes('clamping')) return 'Cutting Goggles (Torch)';
-      if (low === 'full face*') return ''; // remove
-      if (low === 'hearing prot.') return 'Hearing Protection';
-      if (low === 'double hearing protect') return 'Double Hearing Protection';
-      if (low === 'half face*') return 'Half Face Respirator*';
-      return it;
-    })
+  let headItems = headOrig
+    .map(normalizeHeadItem)
     .filter(Boolean) as string[];
 
-  // Additional respiratory items
-  headItems.push(
+  // --- De-duplicate and enforce requested ordering/placement ---
+  // Items that were causing duplicates when appended:
+  const extraRespItems = [
     'Face Shield',
     'Full Face Respirator*',
     'Powered Air Purifying Respirator (PAPR)',
     'Supplied Air or SCBA',
-    '5-Min Escape Pack'
-  );
+    '5-Min Escape Pack',
+  ];
+
+  // Remove any pre-existing instances of the extras to avoid duplicates
+  headItems = headItems.filter((it) => !extraRespItems.includes(it));
+
+  // Ensure "Face Shield" appears immediately before "Half Face Respirator*"
+  // If "Half Face Respirator*" isn't present, append "Face Shield" near the end.
+  const halfFaceIdx = headItems.indexOf('Half Face Respirator*');
+  if (halfFaceIdx >= 0) {
+    // Insert "Face Shield" right before "Half Face Respirator*"
+    headItems.splice(halfFaceIdx, 0, 'Face Shield');
+  } else {
+    // Half face not present—add Face Shield near the end (but still only once)
+    if (!headItems.includes('Face Shield')) headItems.push('Face Shield');
+  }
+
+  // Append the remaining extras (except Face Shield which we already placed) if missing
+  const toAppend = [
+    'Full Face Respirator*',
+    'Powered Air Purifying Respirator (PAPR)',
+    'Supplied Air or SCBA',
+    '5-Min Escape Pack',
+  ];
+  toAppend.forEach((label) => {
+    if (!headItems.includes(label)) headItems.push(label);
+  });
 
   // HAND adjustments
   const handOrig = additionalPpe.HAND ?? [];
@@ -255,7 +283,7 @@ function renameSC(item: string): string {
   if (item === 'Resource team required on site as a place')
     return 'Rescue team/equipment/plan on site and in place';
   if (item === 'Ensure communication with committee has been documented')
-    return 'Communication with entrants has been determined';
+    return 'Communication with entrants has been determined'; // updated per request
   if (item === 'Use of special lifeline required') return 'Use of tripod/lifeline required'; // will be filtered out
 
   // New renames
@@ -283,7 +311,7 @@ function buildSpecialConditionsList(left: string[], right: string[]): string[] {
         it !== 'Stop all work and report unsafe conditions' &&
         it.toLowerCase() !== 'other' &&
         it !== 'Operational activity considered' &&
-        it !== 'Use of tripod/lifeline required'
+        it !== 'Use of tripod/lifeline required' // removed per request
     );
 
   // unique
@@ -364,7 +392,7 @@ export default function NewPermit() {
     additional_documents: {} as JsonMap,
     // Air Monitoring
     air_monitoring: {} as JsonMap,                // { gas: { 'Initial Reading', t1..tN } }
-    air_monitoring_initials: {} as JsonMap,       // { initial: string, t1: string, ... }
+    air_monitoring_initials: {} as JsonMap,       // { initial: string, t1: string, ... }  // per-column initials
     air_monitoring_headers: {} as JsonMap,        // optional carry-over; not required now
     instrument_info: {} as JsonMap,      // { make, model, serial, bump_tested, calibration_current }
     // New: Confined Space sections
@@ -1175,7 +1203,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* PRCS-only: Confined Space Hazard Assessment */}
+      {/* NEW: Confined Space Hazard Assessment (PRCS only) */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Hazard Assessment</div>
@@ -1275,7 +1303,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Hazard Reduction & Equipment Condition */}
+      {/* Combined: Hazard Reduction & Equipment Condition */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Hazard Reduction &amp; Equipment Condition</div>
         <div className="p-3 grid md:grid-cols-2 gap-6">
@@ -1443,7 +1471,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* Special Conditions */}
+      {/* Special Conditions (Yes/N/A per item; ordered & renamed) */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Special Conditions</div>
         <div className="p-3">
@@ -1496,6 +1524,7 @@ export default function NewPermit() {
                     </div>
                   </div>
 
+                  {/* Fire Watch trigger row */}
                   {isFireWatch && yes && (
                     <div className="mt-2 grid md:grid-cols-2 gap-4">
                       <div className="flex items-center gap-4">
@@ -1550,7 +1579,7 @@ export default function NewPermit() {
         </div>
       </div>
 
-      {/* PRCS-only: Confined Space Rescue Plan */}
+      {/* NEW: Confined Space Rescue Plan (PRCS only) */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Rescue Plan</div>
@@ -1627,7 +1656,7 @@ export default function NewPermit() {
         </div>
       )}
 
-      {/* PRCS-only: Confined Space Authorized Entrant(s) Log — INTERLEAVED */}
+      {/* UPDATED: Confined Space Authorized Entrant(s) Log (PRCS only) */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Entrant(s) Log</div>
@@ -1702,7 +1731,7 @@ export default function NewPermit() {
         </div>
       )}
 
-      {/* PRCS-only: Confined Space Authorized Attendant(s) */}
+      {/* Confined Space Authorized Attendant(s) (PRCS only) */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Attendant(s)</div>
@@ -1761,7 +1790,7 @@ export default function NewPermit() {
         </div>
       )}
 
-      {/* PRCS-only: Confined Space Rescue Team */}
+      {/* Confined Space Rescue Team (PRCS only) */}
       {isPRCS && (
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Rescue Team</div>
