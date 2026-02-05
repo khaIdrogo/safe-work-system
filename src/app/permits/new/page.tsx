@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation'; // (A) added
 import { supabase } from '@/lib/supabase';
 import {
   PERMIT_TYPES,
@@ -99,8 +100,7 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
     .map(normalizeHeadItem)
     .filter(Boolean) as string[];
 
-  // --- De-duplicate and enforce requested ordering/placement ---
-  // Items that were causing duplicates when appended:
+  // De-duplicate and enforce requested ordering/placement
   const extraRespItems = [
     'Face Shield',
     'Full Face Respirator*',
@@ -108,31 +108,18 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
     'Supplied Air or SCBA',
     '5-Min Escape Pack',
   ];
-
-  // Remove any pre-existing instances of the extras to avoid duplicates
   headItems = headItems.filter((it) => !extraRespItems.includes(it));
 
   // Ensure "Face Shield" appears immediately before "Half Face Respirator*"
-  // If "Half Face Respirator*" isn't present, append "Face Shield" near the end.
   const halfFaceIdx = headItems.indexOf('Half Face Respirator*');
   if (halfFaceIdx >= 0) {
-    // Insert "Face Shield" right before "Half Face Respirator*"
     headItems.splice(halfFaceIdx, 0, 'Face Shield');
   } else {
-    // Half face not present—add Face Shield near the end (but still only once)
     if (!headItems.includes('Face Shield')) headItems.push('Face Shield');
   }
-
-  // Append the remaining extras (except Face Shield which we already placed) if missing
-  const toAppend = [
-    'Full Face Respirator*',
-    'Powered Air Purifying Respirator (PAPR)',
-    'Supplied Air or SCBA',
-    '5-Min Escape Pack',
-  ];
-  toAppend.forEach((label) => {
-    if (!headItems.includes(label)) headItems.push(label);
-  });
+  // Append remaining extras if missing
+  ['Full Face Respirator*', 'Powered Air Purifying Respirator (PAPR)', 'Supplied Air or SCBA', '5-Min Escape Pack']
+    .forEach((label) => { if (!headItems.includes(label)) headItems.push(label); });
 
   // HAND adjustments
   const handOrig = additionalPpe.HAND ?? [];
@@ -345,6 +332,11 @@ function buildSpecialConditionsList(left: string[], right: string[]): string[] {
 }
 
 export default function NewPermit() {
+  const router = useRouter(); // (B) added
+  const searchParams = useSearchParams(); // (B) added
+  const editId = searchParams?.get('editId') || null; // (B) added
+  const isEdit = !!editId; // (B) added
+
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -444,7 +436,36 @@ export default function NewPermit() {
     })();
   }, []);
 
-  /* ---------- Init Air Monitoring grid ---------- */
+  /* ---------- (C) Load existing permit in edit mode ---------- */
+  useEffect(() => {
+    if (!isEdit || !editId) return;
+    (async () => {
+      const { data, error } = await supabase
+        .from('safe_work_permits')
+        .select('*')
+        .eq('id', editId)
+        .single();
+
+      if (error) {
+        alert(`Could not load permit: ${error.message}`);
+        router.replace('/permits/open');
+        return;
+      }
+
+      // Hydrate the form with the saved payload
+      setFormData((prev) => ({
+        ...prev,
+        ...data,
+      }));
+
+      // Preserve/restore permit number
+      if (typeof data?.permit_number === 'number') {
+        setNextPermitNumber(data.permit_number);
+      }
+    })();
+  }, [isEdit, editId, router]);
+
+  /* ---------- Init Air Monitoring grid (only if not already present) ---------- */
   useEffect(() => {
     setFormData((prev) => {
       if (Object.keys(prev.air_monitoring ?? {}).length > 0) return prev;
@@ -652,6 +673,8 @@ export default function NewPermit() {
   }, [formData.date_issued]);
 
   useEffect(() => {
+    // If editing, keep the existing number; do not recompute
+    if (isEdit) return;
     (async () => {
       const min = parseInt(`${yearPrefix}0000`, 10);
       const max = parseInt(`${yearPrefix}9999`, 10);
@@ -674,7 +697,7 @@ export default function NewPermit() {
         setNextPermitNumber(min + 1);
       }
     })();
-  }, [yearPrefix]);
+  }, [yearPrefix, isEdit]);
 
   /* ---------- Confined Space helpers (new sections) ---------- */
   const CS_HAZARDS = [
@@ -797,17 +820,19 @@ export default function NewPermit() {
     });
   };
 
-  /* ---------- Submit (back-dating guard + CS rule) ---------- */
+  /* ---------- (D) Submit: Update when editing, Insert when creating ---------- */
   const handleSubmit = async () => {
     try {
       if (!userId) return alert('Not signed in');
 
-      // Guard: issued cannot be in the past
+      // Guard: issued cannot be in the past (skip if editing to allow corrections to older permits)
       const issued = new Date(`${formData.date_issued}T${formData.time_issued}`);
       const nowLocal = new Date();
-      if (isNaN(issued.getTime()) || issued.getTime() < nowLocal.getTime()) {
-        alert('Date/Time Issued cannot be in the past.');
-        return;
+      if (!isEdit) {
+        if (isNaN(issued.getTime()) || issued.getTime() < nowLocal.getTime()) {
+          alert('Date/Time Issued cannot be in the past.');
+          return;
+        }
       }
 
       // Confined Space rule: if any "Entry into ..." is selected, either PRCS or NPRCS must be selected
@@ -822,46 +847,78 @@ export default function NewPermit() {
 
       setLoading(true);
 
-      const payload: any = {
-        ...formData,
-        created_by: userId,
-        permit_number: nextPermitNumber ?? null,
-      };
+      if (isEdit && editId) {
+        // --- UPDATE EXISTING ---
+        const payload: any = {
+          ...formData,
+          updated_by: userId,
+          // keep the existing permit_number (or preserved number if set)
+          permit_number: nextPermitNumber ?? (formData as any)?.permit_number ?? null,
+        };
 
-      const { data, error } = await supabase
-        .from('safe_work_permits')
-        .insert([payload])
-        .select('permit_number')
-        .single();
+        const { error } = await supabase
+          .from('safe_work_permits')
+          .update(payload)
+          .eq('id', editId);
 
-      setLoading(false);
+        setLoading(false);
 
-      if (error) {
-        alert(`Error: ${error.message}`);
+        if (error) {
+          alert(`Error: ${error.message}`);
+          return;
+        }
+
+        alert('Permit updated successfully.');
+        // Optionally navigate back to the list (Open permits)
+        // router.push('/permits/open');
         return;
+      } else {
+        // --- INSERT NEW ---
+        const payload: any = {
+          ...formData,
+          created_by: userId,
+          permit_number: nextPermitNumber ?? null,
+        };
+
+        const { data, error } = await supabase
+          .from('safe_work_permits')
+          .insert([payload])
+          .select('permit_number, id')
+          .single();
+
+        setLoading(false);
+
+        if (error) {
+          alert(`Error: ${error.message}`);
+          return;
+        }
+
+        // Minimal print view (as you had before)
+        const w = window.open('', '_blank');
+        if (!w) return;
+
+        w.document.write(`
+          <html>
+            <head><title>Permit #${data.permit_number}</title></head>
+            <body style="font-family: Arial, Helvetica, sans-serif; padding: 24px;">
+              <h1>Safe Work Permit #${data.permit_number ?? '-'}</h1>
+              <table border="1" cellspacing="0" cellpadding="6" width="100%">
+                <tr><th>Date Issued</th><td>${formData.date_issued || '-'}</td><th>Time Issued</th><td>${formData.time_issued || '-'}</td></tr>
+                <tr><th>Date Expires</th><td>${formData.date_expires || '-'}</td><th>Time Expires</th><td>${formData.time_expires || '-'}</td></tr>
+                <tr><th>Facility</th><td>${formData.facility || '-'}</td><th>Location</th><td>${formData.location || '-'}</td></tr>
+                <tr><th>Contractor</th><td colspan="3">${formData.contractor || '-'}</td></tr>
+                <tr><th>Description of Work</th><td colspan="3">${formData.description_of_work || '-'}</td></tr>
+              </table>
+            </body>
+          </html>
+        `);
+        w.document.close();
+        w.focus();
+        w.print();
+
+        // Optionally jump to edit screen
+        // if (data?.id) router.push(`/permits/${data.id}`);
       }
-
-      const w = window.open('', '_blank');
-      if (!w) return;
-
-      w.document.write(`
-        <html>
-          <head><title>Permit #${data.permit_number}</title></head>
-          <body style="font-family: Arial, Helvetica, sans-serif; padding: 24px;">
-            <h1>Safe Work Permit #${data.permit_number ?? '-'}</h1>
-            <table border="1" cellspacing="0" cellpadding="6" width="100%">
-              <tr><th>Date Issued</th><td>${formData.date_issued || '-'}</td><th>Time Issued</th><td>${formData.time_issued || '-'}</td></tr>
-              <tr><th>Date Expires</th><td>${formData.date_expires || '-'}</td><th>Time Expires</th><td>${formData.time_expires || '-'}</td></tr>
-              <tr><th>Facility</th><td>${formData.facility || '-'}</td><th>Location</th><td>${formData.location || '-'}</td></tr>
-              <tr><th>Contractor</th><td colspan="3">${formData.contractor || '-'}</td></tr>
-              <tr><th>Description of Work</th><td colspan="3">${formData.description_of_work || '-'}</td></tr>
-            </table>
-          </body>
-        </html>
-      `);
-      w.document.close();
-      w.focus();
-      w.print();
     } catch (e: any) {
       setLoading(false);
       alert(e?.message ?? 'Unexpected error');
@@ -927,13 +984,15 @@ export default function NewPermit() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-bold">Create New Safe Work Permit</h2>
+      <h2 className="text-xl font-bold">{isEdit ? 'Edit Safe Work Permit' : 'Create New Safe Work Permit'}</h2>
 
       {/* Permit Number */}
       <div className="border rounded">
         <div className="bg-kmGray px-3 py-2 font-semibold">Permit Number</div>
         <div className="p-3">
-          <div className="text-2xl font-bold">{nextPermitNumber ?? `${yearPrefix}0001`}</div>
+          <div className="text-2xl font-bold">
+            {nextPermitNumber ?? (isEdit ? (formData as any)?.permit_number ?? '-' : `${yearPrefix}0001`)}
+          </div>
         </div>
       </div>
 
@@ -2115,7 +2174,7 @@ export default function NewPermit() {
           disabled={loading}
           className="bg-kmGreen text-white px-4 py-2 rounded disabled:opacity-50"
         >
-          {loading ? 'Submitting...' : 'Submit'}
+          {loading ? (isEdit ? 'Updating...' : 'Submitting...') : (isEdit ? 'Update Permit' : 'Submit')}
         </button>
         <button onClick={() => window.history.back()} className="bg-kmRed text-white px-4 py-2 rounded">
           Cancel
