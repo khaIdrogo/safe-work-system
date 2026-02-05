@@ -8,22 +8,21 @@ import {
   HAZARD_REDUCTION_ITEMS,
   SPECIAL_CONDITION_REQUIREMENTS_LEFT,
   SPECIAL_CONDITION_REQUIREMENTS_RIGHT,
-  ADDITIONAL_DOCUMENTS,
-  AIR_MONITORING_GASES
+  AIR_MONITORING_GASES,
 } from './permitOptions';
 
 type JsonMap = Record<string, any>;
 
 /* ---------------- Air Monitoring ---------------- */
-const DYNAMIC_TIME_COLS = 9; // editable time headers (t1..t9)
+const DYNAMIC_TIME_COLS = 9; // editable "Time:" header columns (t1..t9)
 const GAS_ROWS = AIR_MONITORING_GASES.map(({ gas }) => gas);
-const SAFE_RANGE: Record<string, string> = { 
+// Safe ranges (keys with special characters MUST be quoted)
+const SAFE_RANGE: Record<string, string> = {
   'LEL': '<10%',
   'O₂': '19.5-23.5%',
   'H₂S': '<10ppm',
   'CO': '<35ppm',
   'VOC': '—',
-
 };
 
 /* ---------------- Permit Types transforms ---------------- */
@@ -38,7 +37,7 @@ function transformHotWork(items: string[]): string[] {
   return items
     .filter((it) => !removed.has(it))
     .map((it) => {
-      if (it === 'Burning/Welding/Cutting') return 'Burning/Brazing/Welding'; // updated per request
+      if (it === 'Burning/Welding/Cutting') return 'Burning/Brazing/Welding';
       if (it === 'Grinding/Chopping (Grinding)') return 'Grinding/Cutting';
       return it;
     });
@@ -80,19 +79,21 @@ type PPECategory = {
 };
 
 function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
-  // HEAD/FACE/RESPIRATORY
+  // HEAD/FACE/RESPIRATORY from HAND_FACE_RESPIRATORY
   const headOrig = additionalPpe.HAND_FACE_RESPIRATORY ?? [];
   const headItems = headOrig
     .map((it) => {
       const low = it.toLowerCase();
       if (low.includes('clamping')) return 'Cutting Goggles (Torch)';
-      if (low === 'full face*') return '';
+      if (low === 'full face*') return ''; // remove
       if (low === 'hearing prot.') return 'Hearing Protection';
       if (low === 'double hearing protect') return 'Double Hearing Protection';
       if (low === 'half face*') return 'Half Face Respirator*';
       return it;
     })
     .filter(Boolean) as string[];
+
+  // Additional respiratory items
   headItems.push(
     'Face Shield',
     'Full Face Respirator*',
@@ -101,7 +102,7 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
     '5-Min Escape Pack'
   );
 
-  // HAND
+  // HAND adjustments
   const handOrig = additionalPpe.HAND ?? [];
   const handItems = handOrig.map((it) => {
     const low = it.toLowerCase();
@@ -110,7 +111,7 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
     return it;
   });
 
-  // BODY (OTHER_PPE)
+  // BODY from OTHER_PPE with mapping/removals
   const bodyOrig = additionalPpe.OTHER_PPE ?? [];
   const bodyItems = bodyOrig
     .map((it) => {
@@ -129,7 +130,7 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
       'Other PPE – Level C',
     ].includes(it));
 
-  // OTHER SAFETY EQUIPMENT (OTHER)
+  // OTHER SAFETY EQUIPMENT
   const otherOrig = additionalPpe.OTHER ?? [];
   const otherItems = otherOrig
     .map((it) => (it === 'Intentionally Split equip / 12 volt lighting' ? 'Intrinsically Safe Equipment' : it))
@@ -157,9 +158,19 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
         },
       ],
     },
-    { key: 'HAND', label: 'HAND', items: handItems, postInputs: [
-      { dependsOn: ['Chemical Gloves'], key: 'chem_gloves_type', label: 'Type:', placeholder: 'Enter chemical glove type' }
-    ]},
+    {
+      key: 'HAND',
+      label: 'HAND',
+      items: handItems,
+      postInputs: [
+        {
+          dependsOn: ['Chemical Gloves'],
+          key: 'chem_gloves_type',
+          label: 'Type:',
+          placeholder: 'Enter chemical glove type',
+        },
+      ],
+    },
     { key: 'OTHER_PPE', label: 'BODY', items: bodyItems },
     { key: 'OTHER', label: 'OTHER SAFETY EQUIPMENT', items: otherItems },
   ];
@@ -194,44 +205,60 @@ const EQUIPMENT_CONDITION_NEW = [
 ];
 
 /* ---------------- Special Conditions transforms & ordering ---------------- */
-
 function renameSC(item: string): string {
-  // existing renames retained:
-  if (item === 'Fire resistant/blanket or barriers are in place') return 'Fire resistant blankets or barriers are in place';
-  if (item === 'Fire Watch required (assigned as course)') return 'Fire Watch required and assigned';
-  if (item === 'Fire extinguishers required') return 'Fire extinguishers readily accessible';
-  if (item === 'Audit for safety watch/spotter required') return 'Additional fire/safety watch/spotter required';
-  if (item === 'Ventilation as required') return 'Ventilation is adequate';
-  if (item === 'Multiple personnel plan or attendant required') return 'Multiple confined space attendants required';
-  if (item === 'Resource team required on site as a place') return 'Rescue team/equipment/plan on site and in place';
-  if (item === 'Ensure communication with committee has been documented') return 'Communication with entrants has been determined (Comm. Type:)';
-  if (item === 'Use of special lifeline required') return 'Use of tripod/lifeline required';
-  // normalize firefighting text to a single canonical string
-  if (item === 'Firefighting equipment inspected inspection current' || item === 'Firefighting equipment inspected/ inspection current') {
+  // Normalize firefighting to one canonical string
+  if (
+    item === 'Firefighting equipment inspected inspection current' ||
+    item === 'Firefighting equipment inspected/ inspection current'
+  ) {
     return 'Firefighting equipment inspected/ inspection current';
   }
 
-  // NEW renames you requested:
-  if (item === 'Pre-plan inspection/guards required') return 'Wall/floor openings covered or sealed';
-  if (item === 'Damage controls/operations required') return 'Flammable liquids/vapors/dusts removed or controlled';
-  if (item === 'Flammable/Combustible materials have been removed or protected (within 50’ of hot work area)') {
+  // Existing & previous renames
+  if (item === 'Fire resistant/blanket or barriers are in place')
+    return 'Fire resistant blankets or barriers are in place';
+  if (item === 'Fire Watch required (assigned as course)')
+    return 'Fire Watch required and assigned';
+  if (item === 'Fire extinguishers required')
+    return 'Fire extinguishers readily accessible';
+  if (item === 'Audit for safety watch/spotter required')
+    return 'Additional fire/safety watch/spotter required';
+  if (item === 'Ventilation as required')
+    return 'Ventilation is adequate';
+  if (item === 'Multiple personnel plan or attendant required')
+    return 'Multiple confined space attendants required';
+  if (item === 'Resource team required on site as a place')
+    return 'Rescue team/equipment/plan on site and in place';
+  if (item === 'Ensure communication with committee has been documented')
+    return 'Communication with entrants has been determined (Comm. Type:)';
+  if (item === 'Use of special lifeline required')
+    return 'Use of tripod/lifeline required';
+
+  // New renames
+  if (item === 'Pre-plan inspection/guards required')
+    return 'Wall/floor openings covered or sealed';
+  if (item === 'Damage controls/operations required')
+    return 'Flammable liquids/vapors/dusts removed or controlled';
+  if (
+    item ===
+    'Flammable/Combustible materials have been removed or protected (within 50’ of hot work area)'
+  )
     return 'Combustible materials have been removed or protected (within 50’ of hot work area)';
-  }
-  if (item === 'Storage drum/valve equipment items verified') return 'Area atmosphere tested with gas monitor';
+  if (item === 'Storage drum/valve equipment items verified')
+    return 'Area atmosphere tested with gas monitor';
 
   return item;
 }
 
-
-
 function buildSpecialConditionsList(left: string[], right: string[]): string[] {
   let combined = [...left, ...right]
     .map(renameSC)
-    .filter((it) =>
-      it !== 'Vehicle engines turned off (TV Protection)' &&
-      it !== 'Stop all work and report unsafe conditions' &&
-      it.toLowerCase() !== 'other' &&
-      it !== 'Operational activity considered' // remove per request
+    .filter(
+      (it) =>
+        it !== 'Vehicle engines turned off (TV Protection)' &&
+        it !== 'Stop all work and report unsafe conditions' &&
+        it.toLowerCase() !== 'other' &&
+        it !== 'Operational activity considered'
     );
 
   // unique
@@ -243,48 +270,18 @@ function buildSpecialConditionsList(left: string[], right: string[]): string[] {
   const flamRemoved = 'Flammable liquids/vapors/dusts removed or controlled';
   const fireWatch = 'Fire Watch required and assigned';
 
-  // Remove those (we'll re-insert in order)
-  combined = combined.filter((x) =>
-    ![areaHazards, wallFloor, flamRemoved].includes(x)
-  );
-
-  // Move "fireWatch" below "flamRemoved" if needed
-  combined = combined.filter((x) => x !== fireWatch);
+  // Remove the ones we will explicitly insert in order
+  combined = combined.filter((x) => ![areaHazards, wallFloor, flamRemoved, fireWatch].includes(x));
 
   const idx = combined.indexOf(target);
   if (idx >= 0) {
     const before = combined.slice(0, idx + 1);
     const after = combined.slice(idx + 1);
-    // Desired block right after target:
     return [...before, areaHazards, wallFloor, flamRemoved, fireWatch, ...after];
   }
 
-  // If "target" not found, put the block at the front
+  // If target not found, place the block at the front
   return [target, areaHazards, wallFloor, flamRemoved, fireWatch, ...combined.filter((x) => x !== target)];
-}
-
-
-  // ensure unique
-  combined = Array.from(new Set(combined));
-
-  const target = 'Firefighting equipment inspected/ inspection current';
-  const areaHazards = 'Area has been inspected for obvious hazards';
-  const preplan = 'Pre-plan inspection/guards required';
-  const damage = 'Damage controls/operations required';
-
-  // remove the three we will re-insert
-  combined = combined.filter((x) => ![areaHazards, preplan, damage].includes(x));
-
-  const idx = combined.indexOf(target);
-
-  if (idx >= 0) {
-    const before = combined.slice(0, idx + 1);
-    const after = combined.slice(idx + 1);
-    return [...before, areaHazards, preplan, damage, ...after];
-  }
-
-  // if target not found, put them near front
-  return [target, areaHazards, preplan, damage, ...combined.filter((x) => x !== target)];
 }
 
 export default function NewPermit() {
@@ -322,13 +319,13 @@ export default function NewPermit() {
     time_issued: defaultTime,
     date_expires: '',
     time_expires: '',
-    permit_types: {} as JsonMap,        // includes PRCS/NPRCS flags + extras like hotwork_exact_area
+    permit_types: {} as JsonMap,        // includes PRCS/NPRCS + hotwork_exact_area/hotwork_other
     ppe_requirements: {} as JsonMap,
     additional_ppe: {} as JsonMap,
     hazard_reduction: {} as JsonMap,     // { item: { yes, na }, other_text?, radio_channel? }
     equipment_condition: {} as JsonMap,  // { item: { yes, na }, other_text? }
     energy_control: {} as JsonMap,       // { zero_energy, personal_locks, lock_box_number }
-    special_conditions: {} as JsonMap,   // { item: { yes, na }, other_text?, comm_type? }
+    special_conditions: {} as JsonMap,   // { item: { yes, na }, comm_type?, fire_watch_after?, fire_watch_length?, other_text? }
     additional_documents: {} as JsonMap,
     air_monitoring: {} as JsonMap,       // { gas: { Initial, t1..t9 } }
     air_monitoring_headers: {} as JsonMap,
@@ -469,7 +466,7 @@ export default function NewPermit() {
     }));
   };
 
-  // "+12h" for Expires
+  // +12h for Expires
   const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
   const fmtTime = (d: Date) => d.toTimeString().slice(0, 5);
 
@@ -489,14 +486,17 @@ export default function NewPermit() {
   }, [formData.date_issued, formData.time_issued]);
 
   /* ---------- Monitoring enabled if HOT WORK OR CONFINED SPACE (incl. PRCS/NPRCS) ---------- */
+  const hotWorkItems = useMemo(() => transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []), []);
+  const anyHotWorkSelected = hotWorkItems.some((it) => !!formData.permit_types[it]);
+
   const monitoringEnabled = useMemo(() => {
     const anySelected = (keys: string[]) => keys?.some(k => !!formData.permit_types[k]);
-    const hotList = transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []);
     const confList = transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? []);
-    const hotWorkSelected = anySelected(hotList);
-    const confinedSelected = anySelected(confList) || !!formData.permit_types?.PRCS || !!formData.permit_types?.NPRCS;
+    const hotWorkSelected = anySelected(hotWorkItems);
+    const confinedSelected =
+      anySelected(confList) || !!formData.permit_types?.PRCS || !!formData.permit_types?.NPRCS;
     return hotWorkSelected || confinedSelected;
-  }, [formData.permit_types]);
+  }, [formData.permit_types, hotWorkItems]);
 
   /* ---------- Permit number YY#### ---------- */
   const yearPrefix = useMemo(() => {
@@ -633,10 +633,6 @@ export default function NewPermit() {
   const getSCYes = (item: string) => !!(formData.special_conditions?.[item]?.yes);
   const getSCNA  = (item: string) => !!(formData.special_conditions?.[item]?.na);
 
-  // HOT WORK computed list and "any selected?" (for exact area textbox)
-  const hotWorkItems = useMemo(() => transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []), []);
-  const anyHotWorkSelected = hotWorkItems.some((it) => !!formData.permit_types[it]);
-
   // Time min updates as date changes
   const minTime = minTimeForDate(formData.date_issued);
 
@@ -752,55 +748,52 @@ export default function NewPermit() {
         {/* HOT WORK & CONFINED SPACE side-by-side */}
         <div className="p-3 grid md:grid-cols-2 gap-4">
           {/* HOT WORK */}
-         
-<div className="border p-2 rounded">
-  <div className="font-medium mb-2 text-red-600">HOT WORK</div>
-  <div className="space-y-2">
-    {hotWorkItems.map((item) => {
-      const checked = !!(formData.permit_types as JsonMap)[item];
-      // Mark these items in red
-      const redItems = new Set([
-        'Burning/Brazing/Welding',
-        'Grinding/Cutting',
-        'Use of torch',
-      ]);
-      return (
-        <label key={item} className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={() => toggleSimple('permit_types', item)}
-          />
-          <span className={redItems.has(item) ? 'text-red-600 font-semibold' : ''}>
-            {item}
-          </span>
-        </label>
-      );
-    })}
+          <div className="border p-2 rounded">
+            <div className="font-medium mb-2 text-red-600">HOT WORK</div>
+            <div className="space-y-2">
+              {hotWorkItems.map((item) => {
+                const checked = !!(formData.permit_types as JsonMap)[item];
+                const redItems = new Set([
+                  'Burning/Brazing/Welding',
+                  'Grinding/Cutting',
+                  'Use of torch',
+                ]);
+                return (
+                  <label key={item} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleSimple('permit_types', item)}
+                    />
+                    <span className={redItems.has(item) ? 'text-red-600 font-semibold' : ''}>
+                      {item}
+                    </span>
+                  </label>
+                );
+              })}
+              {/* Exact area of Hot Work */}
+              {anyHotWorkSelected && (
+                <div className="mt-2">
+                  <label className="font-medium">Exact area of Hot Work</label>
+                  <input
+                    className="mt-1 w-full border rounded px-2 py-1"
+                    value={(formData.permit_types?.hotwork_exact_area as string) ?? ''}
+                    onChange={(e) => setNestedText('permit_types', 'hotwork_exact_area', e.target.value)}
+                  />
+                </div>
+              )}
+              {/* Other (specify) in red */}
+              <div className="mt-2">
+                <label className="text-red-600 font-semibold">Other (specify)</label>
+                <input
+                  className="mt-1 w-full border rounded px-2 py-1"
+                  value={(formData.permit_types?.hotwork_other as string) ?? ''}
+                  onChange={(e) => setNestedText('permit_types', 'hotwork_other', e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
 
-    {/* Exact area of Hot Work (appears if any hot work item is selected) */}
-    {anyHotWorkSelected && (
-      <div className="mt-2">
-        <label className="font-medium">Exact area of Hot Work</label>
-        <input
-          className="mt-1 w-full border rounded px-2 py-1"
-          value={(formData.permit_types?.hotwork_exact_area as string) ?? ''}
-          onChange={(e) => setNestedText('permit_types', 'hotwork_exact_area', e.target.value)}
-        />
-      </div>
-    )}
-
-    {/* Red label for Other (specify) */}
-    <div className="mt-2">
-      <label className="text-red-600 font-semibold">Other (specify)</label>
-      <input
-        className="mt-1 w-full border rounded px-2 py-1"
-        value={(formData.permit_types?.hotwork_other as string) ?? ''}
-        onChange={(e) => setNestedText('permit_types', 'hotwork_other', e.target.value)}
-      />
-    </div>
-  </div>
-</div>
           {/* CONFINED SPACE (PRCS/NPRCS mutually exclusive) */}
           <div className="border p-2 rounded">
             <div className="font-medium mb-2 flex items-center gap-4">
@@ -856,9 +849,9 @@ export default function NewPermit() {
           </div>
         </div>
 
-        {/* Remaining categories (excluding VEHICLE_ENTRY, PRCS/NPRCS, DNCS, HOT_WORK, CONFINED_SPACE); replace GENERAL WORK */}
+        {/* Remaining categories (GENERAL WORK replaced; exclude vehicle/prcs etc.) */}
         <div className="px-3 pb-3 grid md:grid-cols-2 gap-4">
-          {/* GENERAL WORK (replaced list) */}
+          {/* GENERAL WORK */}
           <div className="border p-2 rounded">
             <div className="font-medium mb-2">GENERAL WORK</div>
             <div className="space-y-2">
@@ -1135,114 +1128,109 @@ export default function NewPermit() {
         </div>
       </div>
 
-      
-{/* Special Conditions (Yes/N/A per item; ordered & renamed) */}
-<div className="border rounded">
-  <div className="bg-kmGray px-3 py-2 font-semibold">Special Conditions</div>
-  <div className="p-3">
-    <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
-      <div>Item</div>
-      <div className="text-center">Yes</div>
-      <div className="text-center">N/A</div>
-    </div>
-
-    <div className="space-y-1">
-      {SPECIAL_LIST.map((item) => {
-        const isComm = item === 'Communication with entrants has been determined (Comm. Type:)';
-        const isFireWatch = item === 'Fire Watch required and assigned';
-
-        const yes = getSCYes(item);
-        const na  = getSCNA(item);
-
-        return (
-          <div key={item} className="border rounded px-2 py-1">
-            {/* Main row */}
-            <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center">
-              {/* Item cell; inline Comm. Type input when Yes */}
-              <div className="text-sm flex items-center gap-2 flex-wrap">
-                <span>{item}</span>
-                {isComm && yes && (
-                  <span className="flex items-center gap-1">
-                    <span>Comm. Type:</span>
-                    <input
-                      className="w-40 border rounded px-2 py-0.5"
-                      value={(formData.special_conditions?.comm_type as string) ?? ''}
-                      onChange={(e) => setNestedText('special_conditions', 'comm_type', e.target.value)}
-                    />
-                  </span>
-                )}
-              </div>
-
-              {/* Yes / N/A */}
-              <div className="flex justify-center">
-                <input
-                  type="checkbox"
-                  checked={yes}
-                  onChange={(e) => setSCYesNA(item, 'yes', e.target.checked)}
-                />
-              </div>
-              <div className="flex justify-center">
-                <input
-                  type="checkbox"
-                  checked={na}
-                  onChange={(e) => setSCYesNA(item, 'na', e.target.checked)}
-                />
-              </div>
-            </div>
-
-            {/* Fire Watch trigger section when Yes */}
-            {isFireWatch && yes && (
-              <div className="mt-2 grid md:grid-cols-2 gap-4">
-                <div className="flex items-center gap-4">
-                  <span className="text-sm font-medium">
-                    Fire watch duration after hot work completed:
-                  </span>
-                  <label className="flex items-center gap-1">
-                    <input
-                      type="checkbox"
-                      checked={formData.special_conditions.fire_watch_after === '30'}
-                      onChange={() => setNestedText('special_conditions', 'fire_watch_after', '30')}
-                    />
-                    30 min
-                  </label>
-                  <label className="flex items-center gap-1">
-                    <input
-                      type="checkbox"
-                      checked={formData.special_conditions.fire_watch_after === '>30'}
-                      onChange={() => setNestedText('special_conditions', 'fire_watch_after', '>30')}
-                    />
-                    &gt;30 min
-                  </label>
-                </div>
-
-                {formData.special_conditions.fire_watch_after === '>30' && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">Length of time:</span>
-                    <input
-                      className="w-24 border rounded px-2 py-0.5"
-                      value={(formData.special_conditions.fire_watch_length as string) ?? ''}
-                      onChange={(e) => setNestedText('special_conditions', 'fire_watch_length', e.target.value)}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
+      {/* Special Conditions (Yes/N/A per item; ordered & renamed) */}
+      <div className="border rounded">
+        <div className="bg-kmGray px-3 py-2 font-semibold">Special Conditions</div>
+        <div className="p-3">
+          <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
+            <div>Item</div>
+            <div className="text-center">Yes</div>
+            <div className="text-center">N/A</div>
           </div>
-        );
-      })}
-    </div>
 
-    <div className="mt-3">
-      <label className="font-medium">Other special conditions</label>
-      <input
-        className="mt-1 w-full border rounded px-2 py-1"
-        value={(formData.special_conditions?.other_text as string) ?? ''}
-        onChange={(e) => setNestedText('special_conditions', 'other_text', e.target.value)}
-      />
-    </div>
-  </div>
-</div>
+          <div className="space-y-1">
+            {SPECIAL_LIST.map((item) => {
+              const isComm = item === 'Communication with entrants has been determined (Comm. Type:)';
+              const isFireWatch = item === 'Fire Watch required and assigned';
+              const yes = getSCYes(item);
+              const na  = getSCNA(item);
 
+              return (
+                <div key={item} className="border rounded px-2 py-1">
+                  <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center">
+                    {/* Item with inline comm type if applicable */}
+                    <div className="text-sm flex items-center gap-2 flex-wrap">
+                      <span>{item}</span>
+                      {isComm && yes && (
+                        <span className="flex items-center gap-1">
+                          <span>Comm. Type:</span>
+                          <input
+                            className="w-40 border rounded px-2 py-0.5"
+                            value={(formData.special_conditions?.comm_type as string) ?? ''}
+                            onChange={(e) => setNestedText('special_conditions', 'comm_type', e.target.value)}
+                          />
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex justify-center">
+                      <input
+                        type="checkbox"
+                        checked={yes}
+                        onChange={(e) => setSCYesNA(item, 'yes', e.target.checked)}
+                      />
+                    </div>
+                    <div className="flex justify-center">
+                      <input
+                        type="checkbox"
+                        checked={na}
+                        onChange={(e) => setSCYesNA(item, 'na', e.target.checked)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Fire Watch trigger row */}
+                  {isFireWatch && yes && (
+                    <div className="mt-2 grid md:grid-cols-2 gap-4">
+                      <div className="flex items-center gap-4">
+                        <span className="text-sm font-medium">
+                          Fire watch duration after hot work completed:
+                        </span>
+                        <label className="flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={formData.special_conditions.fire_watch_after === '30'}
+                            onChange={() => setNestedText('special_conditions', 'fire_watch_after', '30')}
+                          />
+                          30 min
+                        </label>
+                        <label className="flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={formData.special_conditions.fire_watch_after === '>30'}
+                            onChange={() => setNestedText('special_conditions', 'fire_watch_after', '>30')}
+                          />
+                          &gt;30 min
+                        </label>
+                      </div>
+
+                      {formData.special_conditions.fire_watch_after === '>30' && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">Length of time:</span>
+                          <input
+                            className="w-24 border rounded px-2 py-0.5"
+                            value={(formData.special_conditions.fire_watch_length as string) ?? ''}
+                            onChange={(e) => setNestedText('special_conditions', 'fire_watch_length', e.target.value)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-3">
+            <label className="font-medium">Other special conditions</label>
+            <input
+              className="mt-1 w-full border rounded px-2 py-1"
+              value={(formData.special_conditions?.other_text as string) ?? ''}
+              onChange={(e) => setNestedText('special_conditions', 'other_text', e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
 
       {/* Air Monitoring (Perform continuous air monitoring, record hourly) */}
       <div className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}>
