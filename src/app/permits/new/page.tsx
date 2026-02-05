@@ -78,6 +78,10 @@ type PPECategory = {
   }>;
 };
 
+function uniq<T>(arr: T[]) {
+  return Array.from(new Set(arr));
+}
+
 function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
   // HEAD/FACE/RESPIRATORY from HAND_FACE_RESPIRATORY
   const headOrig = additionalPpe.HAND_FACE_RESPIRATORY ?? [];
@@ -135,22 +139,37 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
 
   // OTHER SAFETY EQUIPMENT
   const otherOrig = additionalPpe.OTHER ?? [];
-  const otherItems = otherOrig
-    .map((it) =>
-      it === 'Intentionally Split equip / 12 volt lighting' ? 'Intrinsically Safe Equipment' : it
-    )
-    .filter(
-      (it) =>
-        ![
-          'Descent Device',
-          'X Ray barricades',
-          'X-Ray barricades',
-          'Rail Switch Locks',
-          'Blue Flag / Derailer',
-          'Other',
-          'Other Special PPE',
-        ].includes(it)
-    );
+  let otherItems = otherOrig.map((it) => {
+    if (it === 'Intentionally Split equip / 12 volt lighting') return 'Intrinsically Safe Equipment';
+    if (it === 'GFCI') return 'GFCI Protection';
+    if (it === 'Air Mover, In/Out') return 'Forced Air Ventilation';
+    return it;
+  });
+
+  // Filter out unwanted + normalize
+  otherItems = otherItems.filter(
+    (it) =>
+      ![
+        'Descent Device',
+        'X Ray barricades',
+        'X-Ray barricades',
+        'Rail Switch Locks',
+        'Blue Flag / Derailer',
+        'Other',
+        'Other Special PPE',
+      ].includes(it)
+  );
+
+  // Add requested items (ensure unique)
+  otherItems = uniq([
+    ...otherItems,
+    'Ladder(s)',
+    'Tripod/Hoist',
+    'First Aid Kit',
+    'Portable Lighting',
+    'Escape/Rescue Air Cylinder',
+    'Barricading Materials',
+  ]);
 
   return [
     {
@@ -236,8 +255,8 @@ function renameSC(item: string): string {
   if (item === 'Resource team required on site as a place')
     return 'Rescue team/equipment/plan on site and in place';
   if (item === 'Ensure communication with committee has been documented')
-    return 'Communication with entrants has been determined'; // <-- UPDATED
-  if (item === 'Use of special lifeline required') return 'Use of tripod/lifeline required';
+    return 'Communication with entrants has been determined'; // updated per request
+  if (item === 'Use of special lifeline required') return 'Use of tripod/lifeline required'; // will be filtered out
 
   // New renames
   if (item === 'Pre-plan inspection/guards required')
@@ -263,7 +282,8 @@ function buildSpecialConditionsList(left: string[], right: string[]): string[] {
         it !== 'Vehicle engines turned off (TV Protection)' &&
         it !== 'Stop all work and report unsafe conditions' &&
         it.toLowerCase() !== 'other' &&
-        it !== 'Operational activity considered'
+        it !== 'Operational activity considered' &&
+        it !== 'Use of tripod/lifeline required' // removed per request
     );
 
   // unique
@@ -331,18 +351,42 @@ export default function NewPermit() {
     time_issued: defaultTime,
     date_expires: '',
     time_expires: '',
-    permit_types: {} as JsonMap, // includes PRCS/NPRCS + hotwork_exact_area/hotwork_other
+    permit_types: {} as JsonMap,        // includes PRCS/NPRCS + hotwork_exact_area/hotwork_other
     ppe_requirements: {} as JsonMap,
     additional_ppe: {} as JsonMap,
-    hazard_reduction: {} as JsonMap, // { item: { yes, na }, other_text?, radio_channel? }
-    equipment_condition: {} as JsonMap, // { item: { yes, na }, other_text? }
-    energy_control: {} as JsonMap, // { zero_energy, personal_locks, lock_box_number }
-    special_conditions: {} as JsonMap, // { item: { yes, na }, comm_type?, fire_watch_after?, fire_watch_length?, other_text? }
+    hazard_reduction: {} as JsonMap,     // { item: { yes, na }, other_text?, radio_channel? }
+    equipment_condition: {} as JsonMap,  // { item: { yes, na }, other_text? }
+    energy_control: {} as JsonMap,       // { zero_energy, personal_locks, lock_box_number }
+    special_conditions: {} as JsonMap,   // { item: { yes, na }, comm_type?, fire_watch_after?, fire_watch_length?, other_text? }
     additional_documents: {} as JsonMap,
-    air_monitoring: {} as JsonMap, // { gas: { Initial, t1..t9 } }
+    // Air Monitoring
+    air_monitoring: {} as JsonMap,       // { gas: { 'Initial Reading', t1..t9 } }
     air_monitoring_headers: {} as JsonMap,
-    instrument_info: {} as JsonMap, // { make, model, serial, bump_tested, calibration_current }
-    signatures: { issuer: '', receiver: '' } as JsonMap,
+    instrument_info: {} as JsonMap,      // { make, model, serial, bump_tested, calibration_current }
+    // New: Confined Space sections
+    confined_hazard_assessment: {} as JsonMap, // { hazard: boolean, other_text? }
+    confined_rescue_plan: {} as JsonMap,       // { non_entry, entry, notes, reviewed, supervisor_initials }
+    confined_entrants: {
+      time_pairs: 3,
+      rows: Array.from({ length: 3 }, () => ({
+        name: '',
+        times: Array.from({ length: 3 }, () => ({ in: '', out: '' })),
+      })),
+    } as JsonMap,
+    confined_attendants: {
+      rows: Array.from({ length: 2 }, () => ({
+        name: '',
+        times: Array.from({ length: 2 }, () => ({ start: '', stop: '' })),
+      })),
+    } as JsonMap,
+    confined_rescue_team: {
+      rows: Array.from({ length: 4 }, () => ({
+        name: '',
+        times: Array.from({ length: 2 }, () => ({ start: '', stop: '' })),
+      })),
+    } as JsonMap,
+
+    signatures: { issuer: '', receiver: '', entry_supervisor: '' } as JsonMap,
   });
 
   // Permit number (YY####)
@@ -374,7 +418,7 @@ export default function NewPermit() {
       if (Object.keys(prev.air_monitoring ?? {}).length > 0) return prev;
       const table: JsonMap = {};
       GAS_ROWS.forEach((gas) => {
-        table[gas] = { Initial: '' };
+        table[gas] = { 'Initial Reading': '' };
         for (let i = 1; i <= DYNAMIC_TIME_COLS; i++) {
           table[gas][`t${i}`] = '';
         }
@@ -506,6 +550,12 @@ export default function NewPermit() {
     return hotWorkSelected || confinedSelected;
   }, [formData.permit_types, hotWorkItems]);
 
+  const confinedList = useMemo(
+    () => transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? []),
+    []
+  );
+  const isPRCS = !!formData.permit_types?.PRCS;
+
   /* ---------- Permit number YY#### ---------- */
   const yearPrefix = useMemo(() => {
     const d = formData.date_issued ? new Date(formData.date_issued) : new Date();
@@ -537,7 +587,128 @@ export default function NewPermit() {
     })();
   }, [yearPrefix]);
 
-  /* ---------- Submit (back-dating guard) ---------- */
+  /* ---------- Confined Space helpers (new sections) ---------- */
+  const CS_HAZARDS = [
+    'Oxygen deficient atmosphere',
+    'Oxygen enriched atmosphere',
+    'Carbon Monoxide',
+    'Flammable/Combustibles',
+    'Corrosive Chemicals',
+    'Painting or Solvent Fumes',
+    'Welding/Burning Fumes',
+    'Engulfment',
+    'Protruding Objects',
+    'Impalement Hazards',
+    'Slippery Surfaces',
+    'Stored Pressure',
+    'Moving Equipment/Machinery',
+    'Exposed Electrical Parts',
+    'High Temperatures',
+    'Fall Hazards',
+    'Other',
+  ];
+
+  const toggleCSHazard = (hazard: string) => {
+    setFormData((prev) => {
+      const sec = (prev.confined_hazard_assessment as JsonMap) ?? {};
+      return {
+        ...prev,
+        confined_hazard_assessment: { ...sec, [hazard]: !(sec?.[hazard] ?? false) },
+      };
+    });
+  };
+
+  const addEntrantRow = () => {
+    setFormData((prev) => {
+      const ent = (prev.confined_entrants as JsonMap) ?? {};
+      const timePairs = ent.time_pairs ?? 3;
+      const rows = (ent.rows as any[]) ?? [];
+      const newRow = {
+        name: '',
+        times: Array.from({ length: timePairs }, () => ({ in: '', out: '' })),
+      };
+      return {
+        ...prev,
+        confined_entrants: { time_pairs: timePairs, rows: [...rows, newRow] },
+      };
+    });
+  };
+
+  const addEntrantTimePair = () => {
+    setFormData((prev) => {
+      const ent = (prev.confined_entrants as JsonMap) ?? {};
+      const timePairs = (ent.time_pairs ?? 3) + 1;
+      const rows = ((ent.rows as any[]) ?? []).map((r: any) => ({
+        ...r,
+        times: [...r.times, { in: '', out: '' }],
+      }));
+      return {
+        ...prev,
+        confined_entrants: { time_pairs: timePairs, rows },
+      };
+    });
+  };
+
+  const setEntrantName = (rowIdx: number, value: string) => {
+    setFormData((prev) => {
+      const ent = (prev.confined_entrants as JsonMap) ?? {};
+      const rows = ((ent.rows as any[]) ?? []).map((r: any, i: number) =>
+        i === rowIdx ? { ...r, name: value } : r
+      );
+      return { ...prev, confined_entrants: { ...ent, rows } };
+    });
+  };
+
+  const setEntrantTime = (
+    rowIdx: number,
+    pairIdx: number,
+    field: 'in' | 'out',
+    value: string
+  ) => {
+    setFormData((prev) => {
+      const ent = (prev.confined_entrants as JsonMap) ?? {};
+      const rows = ((ent.rows as any[]) ?? []).map((r: any, i: number) => {
+        if (i !== rowIdx) return r;
+        const times = r.times.map((t: any, j: number) =>
+          j === pairIdx ? { ...t, [field]: value } : t
+        );
+        return { ...r, times };
+      });
+      return { ...prev, confined_entrants: { ...ent, rows } };
+    });
+  };
+
+  const setAttendantName = (sectionKey: 'confined_attendants' | 'confined_rescue_team', rowIdx: number, value: string) => {
+    setFormData((prev) => {
+      const sec = (prev[sectionKey] as JsonMap) ?? {};
+      const rows = ((sec.rows as any[]) ?? []).map((r: any, i: number) =>
+        i === rowIdx ? { ...r, name: value } : r
+      );
+      return { ...prev, [sectionKey]: { ...sec, rows } };
+    });
+  };
+
+  const setAttendantTime = (
+    sectionKey: 'confined_attendants' | 'confined_rescue_team',
+    rowIdx: number,
+    pairIdx: number,
+    field: 'start' | 'stop',
+    value: string
+  ) => {
+    setFormData((prev) => {
+      const sec = (prev[sectionKey] as JsonMap) ?? {};
+      const rows = ((sec.rows as any[]) ?? []).map((r: any, i: number) => {
+        if (i !== rowIdx) return r;
+        const times = r.times.map((t: any, j: number) =>
+          j === pairIdx ? { ...t, [field]: value } : t
+        );
+        return { ...r, times };
+      });
+      return { ...prev, [sectionKey]: { ...sec, rows } };
+    });
+  };
+
+  /* ---------- Submit (back-dating guard + CS rule) ---------- */
   const handleSubmit = async () => {
     try {
       if (!userId) return alert('Not signed in');
@@ -547,6 +718,16 @@ export default function NewPermit() {
       const nowLocal = new Date();
       if (isNaN(issued.getTime()) || issued.getTime() < nowLocal.getTime()) {
         alert('Date/Time Issued cannot be in the past.');
+        return;
+      }
+
+      // Confined Space rule: if any "Entry into ..." is selected, either PRCS or NPRCS must be selected
+      const anyEntryIntoSelected = confinedList.some(
+        (item) => item.toLowerCase().startsWith('entry into') && !!formData.permit_types[item]
+      );
+      const hasPRCSorNPRCS = !!formData.permit_types?.PRCS || !!formData.permit_types?.NPRCS;
+      if (anyEntryIntoSelected && !hasPRCSorNPRCS) {
+        alert('*Please select either PRCS or NPRCS');
         return;
       }
 
@@ -845,7 +1026,7 @@ export default function NewPermit() {
               </label>
             </div>
             <div className="space-y-2">
-              {transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? []).map((item) => {
+              {confinedList.map((item) => {
                 const checked = !!(formData.permit_types as JsonMap)[item];
                 return (
                   <label key={item} className="flex items-center gap-2">
@@ -932,6 +1113,44 @@ export default function NewPermit() {
             ))}
         </div>
       </div>
+
+      {/* NEW: Confined Space Hazard Assessment (PRCS only) */}
+      {isPRCS && (
+        <div className="border rounded">
+          <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Hazard Assessment</div>
+          <div className="p-3 space-y-3">
+            <div className="text-xs text-gray-700">
+              check all the apply to the space or may be introduced by work
+            </div>
+            <div className="grid md:grid-cols-2 gap-3">
+              {CS_HAZARDS.map((hz) => {
+                const isOther = hz === 'Other';
+                const checked = !!(formData.confined_hazard_assessment?.[hz]);
+                return (
+                  <div key={hz} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleCSHazard(hz)}
+                    />
+                    <span>{hz}</span>
+                    {isOther && checked && (
+                      <input
+                        className="ml-2 border rounded px-2 py-1 flex-1"
+                        placeholder="Specify other hazard"
+                        value={formData.confined_hazard_assessment?.other_text ?? ''}
+                        onChange={(e) =>
+                          setNestedText('confined_hazard_assessment', 'other_text', e.target.value)
+                        }
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* PPE */}
       <div className="border rounded">
@@ -1175,7 +1394,7 @@ export default function NewPermit() {
 
           <div className="space-y-1">
             {SPECIAL_LIST.map((item, idx) => {
-              // UPDATED: detect "Comm" by the new label text (without suffix)
+              // detect "Comm" by the updated label text
               const isComm = item === 'Communication with entrants has been determined';
               const isFireWatch = item === 'Fire Watch required and assigned';
               const yes = getSCYes(item);
@@ -1274,6 +1493,281 @@ export default function NewPermit() {
         </div>
       </div>
 
+      {/* NEW: Confined Space Rescue Plan (PRCS only) */}
+      {isPRCS && (
+        <div className="border rounded">
+          <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Rescue Plan</div>
+          <div className="p-3 space-y-4">
+            <div className="flex items-center gap-6">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={!!formData.confined_rescue_plan?.non_entry}
+                  onChange={() =>
+                    setNestedText(
+                      'confined_rescue_plan',
+                      'non_entry',
+                      !(formData.confined_rescue_plan?.non_entry ?? false)
+                    )
+                  }
+                />
+                Non-Entry Rescue Plan
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={!!formData.confined_rescue_plan?.entry}
+                  onChange={() =>
+                    setNestedText(
+                      'confined_rescue_plan',
+                      'entry',
+                      !(formData.confined_rescue_plan?.entry ?? false)
+                    )
+                  }
+                />
+                Entry Rescue Plan
+              </label>
+            </div>
+
+            <div>
+              <label className="font-medium">Rescue Plan Details</label>
+              <textarea
+                rows={4}
+                className="mt-1 w-full border rounded px-2 py-1"
+                value={formData.confined_rescue_plan?.notes ?? ''}
+                onChange={(e) => setNestedText('confined_rescue_plan', 'notes', e.target.value)}
+              />
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4 items-center">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={!!formData.confined_rescue_plan?.reviewed}
+                  onChange={() =>
+                    setNestedText(
+                      'confined_rescue_plan',
+                      'reviewed',
+                      !(formData.confined_rescue_plan?.reviewed ?? false)
+                    )
+                  }
+                />
+                Authorizing Entry Supervisor has developed or reviewed the rescue plan
+              </label>
+
+              <div>
+                <label className="font-medium">Entry Supervisor Initials</label>
+                <input
+                  className="mt-1 w-40 border rounded px-2 py-1"
+                  value={formData.confined_rescue_plan?.supervisor_initials ?? ''}
+                  onChange={(e) =>
+                    setNestedText('confined_rescue_plan', 'supervisor_initials', e.target.value)
+                  }
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NEW: Confined Space Authorized Entrant(s) Log (PRCS only) */}
+      {isPRCS && (
+        <div className="border rounded">
+          <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Entrant(s) Log</div>
+          <div className="p-3 space-y-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded bg-blue-600 text-white px-3 py-1 text-sm"
+                onClick={addEntrantRow}
+              >
+                Add a name
+              </button>
+              <button
+                type="button"
+                className="rounded bg-blue-600 text-white px-3 py-1 text-sm"
+                onClick={addEntrantTimePair}
+              >
+                Add Time In/Out
+              </button>
+            </div>
+
+            {/* Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr>
+                    <th className="border px-2 py-1 text-left">Name</th>
+                    {Array.from({ length: (formData.confined_entrants?.time_pairs ?? 3) }).map((_, i) => (
+                      <th key={`ti-${i}`} className="border px-2 py-1 text-left">
+                        Time In
+                      </th>
+                    ))}
+                    {Array.from({ length: (formData.confined_entrants?.time_pairs ?? 3) }).map((_, i) => (
+                      <th key={`to-${i}`} className="border px-2 py-1 text-left">
+                        Time Out
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(formData.confined_entrants?.rows ?? []).map((row: any, rIdx: number) => (
+                    <tr key={`row-${rIdx}`}>
+                      <td className="border px-2 py-1">
+                        <input
+                          className="w-full border rounded px-2 py-1"
+                          value={row.name}
+                          onChange={(e) => setEntrantName(rIdx, e.target.value)}
+                        />
+                      </td>
+                      {row.times.map((t: any, pIdx: number) => (
+                        <td key={`in-${pIdx}`} className="border px-2 py-1">
+                          <input
+                            type="time"
+                            className="w-full border rounded px-2 py-1"
+                            value={t.in}
+                            onChange={(e) => setEntrantTime(rIdx, pIdx, 'in', e.target.value)}
+                          />
+                        </td>
+                      ))}
+                      {row.times.map((t: any, pIdx: number) => (
+                        <td key={`out-${pIdx}`} className="border px-2 py-1">
+                          <input
+                            type="time"
+                            className="w-full border rounded px-2 py-1"
+                            value={t.out}
+                            onChange={(e) => setEntrantTime(rIdx, pIdx, 'out', e.target.value)}
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NEW: Confined Space Authorized Attendant(s) (PRCS only) */}
+      {isPRCS && (
+        <div className="border rounded">
+          <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Attendant(s)</div>
+          <div className="p-3">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr>
+                    <th className="border px-2 py-1 text-left">Name</th>
+                    <th className="border px-2 py-1 text-left">Start Time</th>
+                    <th className="border px-2 py-1 text-left">Stop Time</th>
+                    <th className="border px-2 py-1 text-left">Start Time</th>
+                    <th className="border px-2 py-1 text-left">Stop Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(formData.confined_attendants?.rows ?? []).map((row: any, rIdx: number) => (
+                    <tr key={`att-${rIdx}`}>
+                      <td className="border px-2 py-1">
+                        <input
+                          className="w-full border rounded px-2 py-1"
+                          value={row.name}
+                          onChange={(e) => setAttendantName('confined_attendants', rIdx, e.target.value)}
+                        />
+                      </td>
+                      {row.times.map((t: any, pIdx: number) => (
+                        <td key={`att-${rIdx}-${pIdx}-start`} className="border px-2 py-1">
+                          <input
+                            type="time"
+                            className="w-full border rounded px-2 py-1"
+                            value={t.start}
+                            onChange={(e) =>
+                              setAttendantTime('confined_attendants', rIdx, pIdx, 'start', e.target.value)
+                            }
+                          />
+                        </td>
+                      ))}
+                      {row.times.map((t: any, pIdx: number) => (
+                        <td key={`att-${rIdx}-${pIdx}-stop`} className="border px-2 py-1">
+                          <input
+                            type="time"
+                            className="w-full border rounded px-2 py-1"
+                            value={t.stop}
+                            onChange={(e) =>
+                              setAttendantTime('confined_attendants', rIdx, pIdx, 'stop', e.target.value)
+                            }
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NEW: Confined Space Rescue Team (PRCS only) */
+      }
+      {isPRCS && (
+        <div className="border rounded">
+          <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Rescue Team</div>
+          <div className="p-3">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr>
+                    <th className="border px-2 py-1 text-left">Name</th>
+                    <th className="border px-2 py-1 text-left">Start Time</th>
+                    <th className="border px-2 py-1 text-left">Stop Time</th>
+                    <th className="border px-2 py-1 text-left">Start Time</th>
+                    <th className="border px-2 py-1 text-left">Stop Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(formData.confined_rescue_team?.rows ?? []).map((row: any, rIdx: number) => (
+                    <tr key={`team-${rIdx}`}>
+                      <td className="border px-2 py-1">
+                        <input
+                          className="w-full border rounded px-2 py-1"
+                          value={row.name}
+                          onChange={(e) => setAttendantName('confined_rescue_team', rIdx, e.target.value)}
+                        />
+                      </td>
+                      {row.times.map((t: any, pIdx: number) => (
+                        <td key={`team-${rIdx}-${pIdx}-start`} className="border px-2 py-1">
+                          <input
+                            type="time"
+                            className="w-full border rounded px-2 py-1"
+                            value={t.start}
+                            onChange={(e) =>
+                              setAttendantTime('confined_rescue_team', rIdx, pIdx, 'start', e.target.value)
+                            }
+                          />
+                        </td>
+                      ))}
+                      {row.times.map((t: any, pIdx: number) => (
+                        <td key={`team-${rIdx}-${pIdx}-stop`} className="border px-2 py-1">
+                          <input
+                            type="time"
+                            className="w-full border rounded px-2 py-1"
+                            value={t.stop}
+                            onChange={(e) =>
+                              setAttendantTime('confined_rescue_team', rIdx, pIdx, 'stop', e.target.value)
+                            }
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Air Monitoring (Perform continuous air monitoring, record hourly) */}
       <div
         className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}
@@ -1297,16 +1791,34 @@ export default function NewPermit() {
 
           <table className="w-full text-sm border-collapse">
             <thead>
+              {/* NEW: PRCS-only initials-of-tester row */}
+              {isPRCS && (
+                <tr>
+                  <th className="border px-2 py-1 text-left">Initials of tester</th>
+                  <th
+                    className="border px-2 py-1 text-left"
+                    colSpan={2 + DYNAMIC_TIME_COLS} // (Safe Range + Initial Reading + time columns)
+                  >
+                    <input
+                      className="w-48 border rounded px-2 py-1"
+                      value={formData.air_monitoring?.initials_tester ?? ''}
+                      onChange={(e) => setNestedText('air_monitoring', 'initials_tester', e.target.value)}
+                      disabled={!monitoringEnabled}
+                    />
+                  </th>
+                </tr>
+              )}
               <tr>
                 <th className="border px-2 py-1 text-left">Gas</th>
                 <th className="border px-2 py-1 text-left">Safe Range</th>
-                <th className="border px-2 py-1 text-left">Initial</th>
+                <th className="border px-2 py-1 text-left">Initial Reading</th>
                 {Array.from({ length: DYNAMIC_TIME_COLS }).map((_, idx) => (
                   <th key={`h-${idx}`} className="border px-2 py-1 text-left">
                     <div className="flex items-center gap-2">
                       <span>Time:</span>
                       <input
-                        className="w-24 border rounded px-1 py-0.5"
+                        type="time"
+                        className="w-28 border rounded px-1 py-0.5"
                         value={timeHeaders[idx] ?? ''}
                         onChange={(e) => setHeaderLabel(idx, e.target.value)}
                         disabled={!monitoringEnabled}
@@ -1323,16 +1835,16 @@ export default function NewPermit() {
                   <tr key={gas} className={rowDisabled ? 'bg-gray-100' : ''}>
                     <td className="border px-2 py-1 font-medium">{gas}</td>
                     <td className="border px-2 py-1 text-gray-700">{SAFE_RANGE[gas] ?? '—'}</td>
-                    {/* Initial */}
+                    {/* Initial Reading */}
                     <td className="border px-1 py-1">
                       <input
                         className="w-full border rounded px-1 py-0.5"
-                        value={formData.air_monitoring?.[gas]?.['Initial'] ?? ''}
-                        onChange={(e) => setAirCell(gas, 'Initial', e.target.value)}
+                        value={formData.air_monitoring?.[gas]?.['Initial Reading'] ?? ''}
+                        onChange={(e) => setAirCell(gas, 'Initial Reading', e.target.value)}
                         disabled={!monitoringEnabled || rowDisabled}
                       />
                     </td>
-                    {/* Dynamic Time columns (t1..tN) */}
+                    {/* Dynamic Time columns (t1..tN) readings */}
                     {Array.from({ length: DYNAMIC_TIME_COLS }).map((_, idx) => {
                       const key = `t${idx + 1}`;
                       return (
@@ -1472,6 +1984,23 @@ export default function NewPermit() {
               }
             />
           </div>
+
+          {/* NEW: PRCS-only signature field */}
+          {isPRCS && (
+            <div className="md:col-span-2">
+              <label className="font-medium">Confined Space Authorized Entry Supervisor</label>
+              <input
+                className="mt-1 w-full border rounded px-2 py-1"
+                value={formData.signatures.entry_supervisor ?? ''}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    signatures: { ...(prev.signatures ?? {}), entry_supervisor: e.target.value },
+                  }))
+                }
+              />
+            </div>
+          )}
         </div>
       </div>
 
