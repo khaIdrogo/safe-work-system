@@ -255,7 +255,7 @@ function renameSC(item: string): string {
   if (item === 'Resource team required on site as a place')
     return 'Rescue team/equipment/plan on site and in place';
   if (item === 'Ensure communication with committee has been documented')
-    return 'Communication with entrants has been determined';
+    return 'Communication with entrants has been determined'; // updated per request
   if (item === 'Use of special lifeline required') return 'Use of tripod/lifeline required'; // will be filtered out
 
   // New renames
@@ -364,8 +364,8 @@ export default function NewPermit() {
     additional_documents: {} as JsonMap,
     // Air Monitoring
     air_monitoring: {} as JsonMap,                // { gas: { 'Initial Reading', t1..tN } }
-    air_monitoring_initials: {} as JsonMap,       // { initial: string, t1: string, ... }  // NEW
-    air_monitoring_headers: {} as JsonMap,        // (optional carry-over; not required now)
+    air_monitoring_initials: {} as JsonMap,       // { initial: string, t1: string, ... }  // per-column initials
+    air_monitoring_headers: {} as JsonMap,        // optional carry-over; not required now
     instrument_info: {} as JsonMap,      // { make, model, serial, bump_tested, calibration_current }
     // New: Confined Space sections
     confined_hazard_assessment: {} as JsonMap, // { hazard: boolean, other_text? }
@@ -1181,7 +1181,6 @@ export default function NewPermit() {
           <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Hazard Assessment</div>
           <div className="p-3 space-y-3">
             <div className="text-xs text-gray-700">
-              {/* updated helper text */}
               check all that apply to the space or may be introduced by work
             </div>
             <div className="grid md:grid-cols-2 gap-3">
@@ -1509,7 +1508,7 @@ export default function NewPermit() {
                             checked={formData.special_conditions.fire_watch_after === '30'}
                             onChange={() => setNestedText('special_conditions', 'fire_watch_after', '30')}
                           />
-                          {'>'}30 min
+                          30 min
                         </label>
                         <label className="flex items-center gap-1">
                           <input
@@ -1517,7 +1516,7 @@ export default function NewPermit() {
                             checked={formData.special_conditions.fire_watch_after === '>30'}
                             onChange={() => setNestedText('special_conditions', 'fire_watch_after', '>30')}
                           />
-                          >30 min
+                          {'>'}30 min
                         </label>
                       </div>
 
@@ -1659,10 +1658,10 @@ export default function NewPermit() {
                     </th>
                     {/* Interleaved headers: In1, Out1, In2, Out2, ... */}
                     {Array.from({ length: formData.confined_entrants?.time_pairs ?? 3 }).map((_, i) => (
-                      <th key={`h-in-${i}`} className="border px-2 py-1 text-left">Time In</th>
+                      <th key={`h-pair-in-${i}`} className="border px-2 py-1 text-left">Time In</th>
                     ))}
                     {Array.from({ length: formData.confined_entrants?.time_pairs ?? 3 }).map((_, i) => (
-                      <th key={`h-out-${i}`} className="border px-2 py-1 text-left">Time Out</th>
+                      <th key={`h-pair-out-${i}`} className="border px-2 py-1 text-left">Time Out</th>
                     ))}
                   </tr>
                 </thead>
@@ -1676,9 +1675,7 @@ export default function NewPermit() {
                           onChange={(e) => setEntrantName(rIdx, e.target.value)}
                         />
                       </td>
-                      {/* Interleaved cells: In1, In2, In3... then Out1, Out2... to maintain layout consistency
-                          with header row this still appears grouped; if you want true interleaving per pair in DOM order,
-                          replace these two maps with a single map over row.times rendering two <td> per pair. */}
+                      {/* Interleaved cells: In1, Out1, In2, Out2, ... */}
                       {row.times.map((t: any, pIdx: number) => (
                         <td key={`pair-in-${pIdx}`} className="border px-2 py-1">
                           <input
