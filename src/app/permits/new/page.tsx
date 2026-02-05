@@ -1509,7 +1509,7 @@ export default function NewPermit() {
                             checked={formData.special_conditions.fire_watch_after === '30'}
                             onChange={() => setNestedText('special_conditions', 'fire_watch_after', '30')}
                           />
-                          30 min
+                          {'>'}30 min
                         </label>
                         <label className="flex items-center gap-1">
                           <input
