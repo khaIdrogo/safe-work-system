@@ -1,14 +1,13 @@
+// src/app/permits/new/permitOptions.ts
+
 export const PERMIT_TYPES = {
   HOT_WORK: [
-    'Burning/Welding/Cutting',
-    'Grinding/Chopping (Grinding)',
-    'Use of electric power tools',
-    'Hot tar activities',
-    'In-situ care maintenance activities (Mow-Edge Weed eat)',
-    'Electrical work that could result in arc/spark',
+    // Simplified to the items you actually use in the UI (the page maps/filters these anyway)
+    'Burning/Brazing/Welding',
+    'Grinding/Cutting',
     'Use of torch',
-    'Use of low volt tools/equip'
   ],
+
   VEHICLE_ENTRY: [
     'Overhead crane/engine entry (e.g. pump, generator, etc.)',
     'Vacuum trucks ops',
@@ -19,20 +18,24 @@ export const PERMIT_TYPES = {
     'Rail operations – engines',
     'Road work',
     'Commercial Trucks',
-    'Pickup truck/passenger vehicle'
+    'Pickup truck/passenger vehicle',
   ],
+
+  // The page uses a custom GENERAL_WORK list, but keeping this for completeness
   GENERAL_WORK: [
-    'Non-construction/repairing/blanking',
-    'Hand power tools/bench/torque',
-    'Inspect/housekeeping/bolt test',
-    'Small equipment materials',
-    'Use of Terminal vehicles',
-    'General works in proximity to rail/equipment',
-    'Heavy lifting operations (crane use)',
-    'Hydro/pressure test',
-    'H2S Monitor',
-    'Walking at elevations/overhead'
+    'Install equipment/materials',
+    'Inspect/troubleshoot/test',
+    'Run conduit/wire/pipe/tubing',
+    'Use of hand tools',
+    'Use of electric/power tools',
+    'Working at elevations/overhead',
+    'Hand paint/wire brush/scrape',
+    'Hydro/pneumatic pressure test',
+    'Crane/lifting equipment',
+    'Use of heavy equipment',
   ],
+
+  // Confined Space items – only the "Entry into..." that should trigger the PRCS/NPRCS rule
   CONFINED_SPACE: [
     'Entry into a tank',
     'Entry into a vessel',
@@ -40,106 +43,105 @@ export const PERMIT_TYPES = {
     'Entry into a pit',
     'Entry into an excavation greater than 4ft',
     'Entry into underground vault',
-    'Entry after cooling off',
-    'Switching building entries',
-    'Breaking lines connections blow-up work'
   ],
+
+  // Placeholders preserved, not used by the page (PRCS/NPRCS are booleans in form state)
   PRCS: ['PRCS items per your form (if any separate)'],
   NPRCS: ['NPRCS items per your form (if any separate)'],
-  DNCS: ['DNCS items per your form (if any separate)']
+  DNCS: ['DNCS items per your form (if any separate)'],
 };
 
 export const ADDITIONAL_PPE = {
   HAND_FACE_RESPIRATORY: [
-    'Clamping goggles (Torch)',
-    'Full Face*',
+    // Normalized labels
+    'Cutting Goggles (Torch)',
     'Welding hood',
     'Goggles (Dust/Chemical)',
-    'Hearing Prot.',
-    'Double hearing Protect',
+    'Hearing Protection',
+    'Double Hearing Protection',
     'Dust Mask',
-    'Half Face*',
-    'Other'
+    'Half Face Respirator*',
+    // Added items used by the page
+    'Face Shield',
+    'Full Face Respirator*',
+    'Powered Air Purifying Respirator (PAPR)',
+    'Supplied Air or SCBA',
+    '5-Min Escape Pack',
   ],
+
   HAND: [
     'Welding gloves/sleeves',
-    'Impact gloves',
-    'Chemical Gloves Type',
+    'Impact Gloves',
+    'Chemical Gloves', // (type captured via extra input in the page)
     'Leather/Cotton',
     'Cut resistant (Gloves/sleeves)',
-    'Other'
   ],
+
   OTHER_PPE: [
-    'Full Body Harness',
+    'Fall Protection Harness & Lanyards',
     'Arc flash PPE',
-    'Smoldering PPEs',
-    'Fire retardant clothing',
-    'KMIT Two watch vest',
-    'Material guards',
+    'Rescue Lifeline',
+    'Fire Retardant (FR) Clothing',
+    'Chemical Suit',
     'Chemical Boots',
-    'H2S Monitor',
-    'Other PPE – Level A',
-    'Other PPE – Level B',
-    'Other PPE – Level C'
   ],
+
   OTHER: [
-    'GFCI',
-    'Descent Device',
-    'Intentionally Split equip / 12 volt lighting',
-    'X Ray barricades',
-    'Air Mover, In/Out',
-    'Rail Switch Locks',
-    'Blue Flag / Derailer',
-    'Other',
-    'Other Special PPE'
-  ]
+    // Mapped/renamed and added items
+    'GFCI Protection',
+    'Intrinsically Safe Equipment',
+    'Forced Air Ventilation',
+    'Ladder(s)',
+    'Tripod/Hoist',
+    'First Aid Kit',
+    'Portable Lighting',
+    'Escape/Rescue Air Cylinder',
+    'Barricading Materials',
+  ],
 };
 
 export const HAZARD_REDUCTION_ITEMS = [
-  'Employee understands they can exercise “You Can Stop”',
+  'Everyone understand they can exercise "Stop Work Authority"',
   'Environmental impacts identified/controlled/mitigated',
-  'Matrix/Assemblies products identified (Hussey/Schemistry)',
+  'Muster Points/ Emergency Exits identified',
   'Employees understand what to do in an emergency',
   'Chemical hazard known/SDS review with employees',
-  'Multi-unit work discussed',
-  'Area barricaded required (overhead work, regulated areas, etc.)',
-  'Grounding bonding required',
+  'Multi-Craft work discussed',
+  'Area barricade required (overhead work, regulated areas, etc.)',
+  'Grounding/bonding required',
   'Flagger/spotter required',
-  'Radio communication (Radio #)',
-  'Other'
+  'Radio communication',
+  'Other',
 ];
 
+// Not consumed by the page (the page uses a new EQUIPMENT_CONDITION list),
+// but kept here to be consistent with the UI.
 export const EQUIPMENT_CONDITION_ITEMS = [
-  'Equipment in good condition / proper maint',
-  'Equipment properly serviced/adjusted',
-  'All guards present/in place',
-  'Machine operations completed review',
-  'Damages/abnormal operations present',
-  'Firefighting equipment inspected inspection current',
-  'Storage drum/valve equipment items verified',
-  'Stop all work and report unsafe conditions',
-  'Other'
+  'Equipment In-Service',
+  'Equipment depressurized/drained',
+  'Equipment cleaned/gas free',
+  'Equipment blinded/disconnected/air gapped',
+  'Abatement completed (asbestos, lead, ect.)',
+  'Fall Protection equipment inspected',
+  'Fall Protection Rescue Plan reviewed with employees',
 ];
 
 export const SPECIAL_CONDITIONS_HEADER = [
   'Transfer operations ceased',
-  'Area Ops or KM Supervisor notified'
+  'Area Ops or KM Supervisor notified',
 ];
 
+// Renamed/normalized and with removed entries omitted
 export const SPECIAL_CONDITION_REQUIREMENTS_LEFT = [
-  'Operational activity considered',
   '100% spark containment required',
-  'Fire resistant/blanket or barriers are in place',
-  'Vehicle engines turned off (TV Protection)',
-  'Flammable/Combustible materials have been removed or protected (within 50’ of hot work area)',
-  'Fire Watch required (assigned as course)',
-  'Fire extinguishers required',
-  'Pre-plan inspection/guards required',
-  'Damage controls/operations required',
-  'Firefighting equipment inspected inspection current',
-  'Storage drum/valve equipment items verified',
-  'Stop all work and report unsafe conditions',
-  'Other'
+  'Fire resistant blankets or barriers are in place',
+  'Combustible materials have been removed or protected (within 50’ of hot work area)',
+  'Fire Watch required and assigned',
+  'Fire extinguishers readily accessible',
+  'Wall/floor openings covered or sealed',
+  'Flammable liquids/vapors/dusts removed or controlled',
+  'Firefighting equipment inspected/ inspection current',
+  'Area atmosphere tested with gas monitor',
 ];
 
 export const SPECIAL_CONDITION_REQUIREMENTS_RIGHT = [
@@ -148,14 +150,12 @@ export const SPECIAL_CONDITION_REQUIREMENTS_RIGHT = [
   'Adequate lighting conditions',
   'Non-sparking tools or materials required',
   'Area has been inspected for obvious hazards',
-  'Audit for safety watch/spotter required',
-  'Ventilation as required',
+  'Additional fire/safety watch/spotter required',
+  'Ventilation is adequate',
   'Confined Space Attendant assigned and onsite',
-  'Multiple personnel plan or attendant required',
-  'Resource team required on site as a place',
-  'Ensure communication with committee has been documented',
-  'Use of special lifeline required',
-  'Other'
+  'Multiple confined space attendants required',
+  'Rescue team/equipment/plan on site and in place',
+  'Communication with entrants has been determined',
 ];
 
 export const ADDITIONAL_DOCUMENTS = [
@@ -166,13 +166,14 @@ export const ADDITIONAL_DOCUMENTS = [
   'Insurance (Form: T-COMLIB-5S)',
   'Emergency/Prevent Reconstruction Inspection Report',
   'One Call Report + One Call Request #',
-  'Confined Space Reclassification Form T-COMLIB-5Z'
+  'Confined Space Reclassification Form T-COMLIB-5Z',
 ];
 
+// Kept in sync with the UI (safe ranges without HTML entities)
 export const AIR_MONITORING_GASES = [
-  { gas: 'LEL', safeRange: '10% - 25% LEL' },
-  { gas: 'O₂', safeRange: '19.5% - 23.5%' },
-  { gas: 'H₂S', safeRange: '< 10 ppm' },
-  { gas: 'CO', safeRange: '< 35 ppm' },
-  { gas: 'VOC', safeRange: '—' }
+  { gas: 'LEL', safeRange: '<10%' },
+  { gas: 'O₂', safeRange: '19.5-23.5%' },
+  { gas: 'H₂S', safeRange: '<10ppm' },
+  { gas: 'CO', safeRange: '<35ppm' },
+  { gas: 'VOC', safeRange: '—' },
 ];
