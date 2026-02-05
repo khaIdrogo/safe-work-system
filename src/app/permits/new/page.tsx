@@ -19,8 +19,8 @@ const GAS_ROWS = AIR_MONITORING_GASES.map(({ gas }) => gas);
 // Safe ranges (keys with special characters MUST be quoted)
 const SAFE_RANGE: Record<string, string> = {
   LEL: '<10%',
-  O₂: '19.5-23.5%',
-  H₂S: '<10ppm',
+  'O₂': '19.5-23.5%',
+  'H₂S': '<10ppm',
   CO: '<35ppm',
   VOC: '—',
 };
