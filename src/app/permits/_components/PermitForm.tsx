@@ -98,11 +98,11 @@ function normalizeHeadItem(it: string): string {
 }
 
 function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
-  // HEAD/FACE/RESPIRATORY from HAND_FACE_RESPIRATORY
+  // HEAD/FACE/RESPIRATORY
   const headOrig = additionalPpe.HAND_FACE_RESPIRATORY ?? [];
   let headItems = headOrig.map(normalizeHeadItem).filter(Boolean) as string[];
 
-  // De-duplicate and enforce requested ordering/placement
+  // Remove duplicates for these extras
   const extraRespItems = [
     'Face Shield',
     'Full Face Respirator*',
@@ -112,12 +112,12 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
   ];
   headItems = headItems.filter((it) => !extraRespItems.includes(it));
 
-  // Place "Face Shield" right before "Half Face Respirator*"
+  // Place "Face Shield" immediately before "Half Face Respirator*"
   const halfFaceIdx = headItems.indexOf('Half Face Respirator*');
   if (halfFaceIdx >= 0) headItems.splice(halfFaceIdx, 0, 'Face Shield');
   else if (!headItems.includes('Face Shield')) headItems.push('Face Shield');
 
-  // Append other extras if missing
+  // Append the remaining extras if missing
   ['Full Face Respirator*', 'Powered Air Purifying Respirator (PAPR)', 'Supplied Air or SCBA', '5-Min Escape Pack']
     .forEach((label) => { if (!headItems.includes(label)) headItems.push(label); });
 
@@ -143,7 +143,7 @@ function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
     })
     .filter((it) => !['Material guards', 'H2S Monitor', 'Other PPE – Level A', 'Other PPE – Level B', 'Other PPE – Level C'].includes(it));
 
-  // OTHER
+  // OTHER SAFETY EQUIPMENT
   const otherOrig = additionalPpe.OTHER ?? [];
   let otherItems = otherOrig.map((it) => {
     if (it === 'Intentionally Split equip / 12 volt lighting') return 'Intrinsically Safe Equipment';
@@ -277,6 +277,11 @@ function buildSpecialConditionsList(left: string[], right: string[]): string[] {
 export default function PermitForm({ mode, recordId, initialData }: PermitFormProps) {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [closing, setClosing] = useState(false); // for Mark as Closed
+
+  // Locking & immutability
+  const originalDateIssued = initialData?.date_issued ?? null;
+  const originalTimeIssued = initialData?.time_issued ?? null;
 
   const [vocNA, setVocNA] = useState<boolean>(true);
   const [energyNA, setEnergyNA] = useState<boolean>(true);
@@ -302,6 +307,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     time_issued: defaultTime,
     date_expires: '',
     time_expires: '',
+    status: '' as string, // NEW: track status
     permit_types: {} as JsonMap,
     ppe_requirements: {} as JsonMap,
     additional_ppe: {} as JsonMap,
@@ -338,6 +344,8 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     signatures: { issuer: '', receiver: '', entry_supervisor: '' } as JsonMap,
   });
 
+  const isClosed = (formData.status ?? initialData?.status) === 'closed';
+
   const [nextPermitNumber, setNextPermitNumber] = useState<number | null>(null);
 
   /* ---------- Auth gate ---------- */
@@ -369,14 +377,18 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     (async () => {
       if (mode !== 'edit') return;
 
-      // If initialData provided by the page, hydrate immediately
       if (initialData) {
-        setFormData((prev) => ({ ...prev, ...initialData }));
+        setFormData((prev) => ({
+          ...prev,
+          ...initialData,
+          air_monitoring_initials: initialData.air_monitoring_initials ?? {},
+          air_monitoring_headers: initialData.air_monitoring_headers ?? {},
+          status: initialData.status ?? '',
+        }));
         if (typeof initialData?.permit_number === 'number') setNextPermitNumber(initialData.permit_number);
         return;
       }
 
-      // Else fetch by recordId (fallback)
       if (!recordId) return;
       const { data, error } = await supabase
         .from('safe_work_permits')
@@ -390,7 +402,13 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         return;
       }
 
-      setFormData((prev) => ({ ...prev, ...data }));
+      setFormData((prev) => ({
+        ...prev,
+        ...data,
+        air_monitoring_initials: data.air_monitoring_initials ?? {},
+        air_monitoring_headers: data.air_monitoring_headers ?? {},
+        status: data.status ?? '',
+      }));
       if (typeof data?.permit_number === 'number') setNextPermitNumber(data.permit_number);
     })();
   }, [mode, recordId, initialData]);
@@ -585,7 +603,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
   }, [formData.date_issued]);
 
   useEffect(() => {
-    // In edit mode, preserve current permit number
+    // In edit mode, preserve the existing permit number
     if (mode === 'edit') return;
 
     (async () => {
@@ -738,17 +756,17 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     try {
       if (!userId) return alert('Not signed in');
 
-      // Guard: issued cannot be in the past (skip for edits)
-      const issued = new Date(`${formData.date_issued}T${formData.time_issued}`);
-      const nowLocal = new Date();
+      // Guard: For CREATE, block past times. For EDIT, allow (we also freeze date/time anyway).
       if (mode === 'create') {
+        const issued = new Date(`${formData.date_issued}T${formData.time_issued}`);
+        const nowLocal = new Date();
         if (isNaN(issued.getTime()) || issued.getTime() < nowLocal.getTime()) {
           alert('Date/Time Issued cannot be in the past.');
           return;
         }
       }
 
-      // Confined Space rule: if any "Entry into ..." is selected, either PRCS or NPRCS must be selected
+      // Confined Space rule
       const anyEntryIntoSelected = transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? []).some(
         (item) => item.toLowerCase().startsWith('entry into') && !!formData.permit_types[item]
       );
@@ -758,12 +776,23 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         return;
       }
 
+      if (isClosed) {
+        alert('This permit is CLOSED and cannot be edited.');
+        return;
+      }
+
       setLoading(true);
 
       if (mode === 'edit' && recordId) {
-        // UPDATE
+        // --- UPDATE EXISTING ---
+        // Freeze original Date/Time Issued on update (prevents reusing the same permit day after day)
+        const safeDateIssued = originalDateIssued ?? formData.date_issued;
+        const safeTimeIssued = originalTimeIssued ?? formData.time_issued;
+
         const payload: any = {
           ...formData,
+          date_issued: safeDateIssued,
+          time_issued: safeTimeIssued,
           updated_by: userId,
           permit_number: nextPermitNumber ?? (formData as any)?.permit_number ?? null,
         };
@@ -783,7 +812,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         alert('Permit updated successfully.');
         return;
       } else {
-        // INSERT
+        // --- INSERT NEW ---
         const payload: any = {
           ...formData,
           created_by: userId,
@@ -803,7 +832,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
           return;
         }
 
-        // Minimal print-out (as before)
+        // Minimal print-out (unchanged)
         const w = window.open('', '_blank');
         if (!w) return;
 
@@ -825,12 +854,34 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         w.document.close();
         w.focus();
         w.print();
-
-        // Optional: navigate to edit screen
-        // if (data?.id) router.push(`/permits/${data.id}`);
       }
     } catch (e: any) {
       setLoading(false);
+      alert(e?.message ?? 'Unexpected error');
+    }
+  };
+
+  /* ---------- Mark as Closed ---------- */
+  const closePermit = async () => {
+    if (mode !== 'edit' || !recordId) return;
+    try {
+      setClosing(true);
+      const { error } = await supabase
+        .from('safe_work_permits')
+        .update({ status: 'closed' }) // canonical
+        .eq('id', recordId);
+
+      setClosing(false);
+
+      if (error) {
+        alert(`Error: ${error.message}`);
+        return;
+      }
+      // Lock immediately
+      setFormData((prev) => ({ ...prev, status: 'closed' }));
+      alert('Permit marked as CLOSED.');
+    } catch (e: any) {
+      setClosing(false);
       alert(e?.message ?? 'Unexpected error');
     }
   };
@@ -886,11 +937,30 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
 
   return (
     <div className="space-y-4">
+      {/* Locked banner */}
+      {isClosed && (
+        <div className="p-3 rounded bg-yellow-100 border border-yellow-300 text-yellow-900">
+          <b>Read-only:</b> This permit is <b>CLOSED</b> and cannot be edited.
+        </div>
+      )}
+
       <h2 className="text-xl font-bold">{mode === 'edit' ? 'Edit Safe Work Permit' : 'Create New Safe Work Permit'}</h2>
 
       {/* Permit Number */}
       <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Permit Number</div>
+        <div className="bg-kmGray px-3 py-2 font-semibold flex items-center justify-between">
+          <span>Permit Number</span>
+          {mode === 'edit' && !isClosed && (
+            <button
+              onClick={closePermit}
+              disabled={closing}
+              className="bg-gray-700 text-white px-3 py-1 rounded disabled:opacity-50"
+              title="Mark this permit as Closed"
+            >
+              {closing ? 'Closing…' : 'Mark as Closed'}
+            </button>
+          )}
+        </div>
         <div className="p-3">
           <div className="text-2xl font-bold">
             {nextPermitNumber ??
@@ -899,1161 +969,1166 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         </div>
       </div>
 
-      {/* Permit Details */}
-      <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Permit Details</div>
-        <div className="p-3 grid md:grid-cols-4 gap-4">
-          <div>
-            <label className="font-medium">Date Issued</label>
-            <input
-              name="date_issued"
-              type="date"
-              value={formData.date_issued}
-              min={defaultDate}
-              onChange={handleDateIssued}
-              className="mt-1 w-full border rounded px-2 py-1"
-            />
-          </div>
-          <div>
-            <label className="font-medium">Time Issued</label>
-            <input
-              name="time_issued"
-              type="time"
-              value={formData.time_issued}
-              min={minTime}
-              onChange={handleTimeIssued}
-              className="mt-1 w-full border rounded px-2 py-1"
-            />
-          </div>
-          <div>
-            <label className="font-medium">Date Expires</label>
-            <input
-              name="date_expires"
-              type="date"
-              value={formData.date_expires}
-              onChange={handleText}
-              className="mt-1 w-full border rounded px-2 py-1"
-              readOnly
-            />
-          </div>
-          <div>
-            <label className="font-medium">Time Expires</label>
-            <input
-              name="time_expires"
-              type="time"
-              value={formData.time_expires}
-              onChange={handleText}
-              className="mt-1 w-full border rounded px-2 py-1"
-              readOnly
-            />
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="font-medium">Facility</label>
-            <input
-              name="facility"
-              value={formData.facility}
-              onChange={handleText}
-              className="mt-1 w-full border rounded px-2 py-1"
-            />
-          </div>
-          <div className="md:col-span-2">
-            <label className="font-medium">Location</label>
-            <input
-              name="location"
-              value={formData.location}
-              onChange={handleText}
-              className="mt-1 w-full border rounded px-2 py-1"
-            />
-          </div>
-
-          <div className="md:col-span-4">
-            <label className="font-medium">Contractor</label>
-            <input
-              name="contractor"
-              value={formData.contractor}
-              onChange={handleText}
-              className="mt-1 w-full border rounded px-2 py-1"
-            />
-          </div>
-
-          <div className="md:col-span-4">
-            <label className="font-medium">Description of Work</label>
-            <textarea
-              name="description_of_work"
-              rows={3}
-              value={formData.description_of_work}
-              onChange={handleText}
-              className="mt-1 w-full border rounded px-2 py-1"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Permit Types */}
-      <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Permit Types</div>
-
-        {/* HOT WORK & CONFINED SPACE side-by-side */}
-        <div className="p-3 grid md:grid-cols-2 gap-4">
-          {/* HOT WORK */}
-          <div className="border p-2 rounded">
-            <div className="font-medium mb-2 text-red-600">HOT WORK</div>
-            <div className="space-y-2">
-              {hotWorkItems.map((item) => {
-                const checked = !!(formData.permit_types as JsonMap)[item];
-                const redItems = new Set(['Burning/Brazing/Welding', 'Grinding/Cutting', 'Use of torch']);
-                return (
-                  <label key={item} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleSimple('permit_types', item)}
-                    />
-                    <span className={redItems.has(item) ? 'text-red-600 font-semibold' : ''}>{item}</span>
-                  </label>
-                );
-              })}
-              {anyHotWorkSelected && (
-                <div className="mt-2">
-                  <label className="font-medium">Exact area of Hot Work</label>
-                  <input
-                    className="mt-1 w-full border rounded px-2 py-1"
-                    value={(formData.permit_types?.hotwork_exact_area as string) ?? ''}
-                    onChange={(e) => setNestedText('permit_types', 'hotwork_exact_area', e.target.value)}
-                  />
-                </div>
-              )}
-              <div className="mt-2">
-                <label className="text-red-600 font-semibold">Other (specify)</label>
-                <input
-                  className="mt-1 w-full border rounded px-2 py-1"
-                  value={(formData.permit_types?.hotwork_other as string) ?? ''}
-                  onChange={(e) => setNestedText('permit_types', 'hotwork_other', e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* CONFINED SPACE */}
-          <div className="border p-2 rounded">
-            <div className="font-medium mb-2 flex items-center gap-4">
-              <span>CONFINED SPACE</span>
-              <label className="flex items-center gap-1 text-sm">
-                <input
-                  type="checkbox"
-                  checked={!!formData.permit_types.PRCS}
-                  onChange={() =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      permit_types: {
-                        ...(prev.permit_types ?? {}),
-                        PRCS: !prev.permit_types?.PRCS,
-                        NPRCS: false,
-                      },
-                    }))
-                  }
-                />
-                PRCS
-              </label>
-              <label className="flex items-center gap-1 text-sm">
-                <input
-                  type="checkbox"
-                  checked={!!formData.permit_types.NPRCS}
-                  onChange={() =>
-                    setFormData((prev) => ({
-                      ...prev,
-                      permit_types: {
-                        ...(prev.permit_types ?? {}),
-                        NPRCS: !prev.permit_types?.NPRCS,
-                        PRCS: false,
-                      },
-                    }))
-                  }
-                />
-                NPRCS
-              </label>
-            </div>
-            <div className="space-y-2">
-              {transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? []).map((item) => {
-                const checked = !!(formData.permit_types as JsonMap)[item];
-                return (
-                  <label key={item} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleSimple('permit_types', item)}
-                    />
-                    <span>{item}</span>
-                  </label>
-                );
-              })}
-              <input
-                placeholder="Other (specify)"
-                className="mt-2 w-full border rounded px-2 py-1"
-                value={(formData.permit_types?.confined_other as string) ?? ''}
-                onChange={(e) => setNestedText('permit_types', 'confined_other', e.target.value)}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Remaining categories (GENERAL WORK replaced) */}
-        <div className="px-3 pb-3 grid md:grid-cols-2 gap-4">
-          {/* GENERAL WORK */}
-          <div className="border p-2 rounded">
-            <div className="font-medium mb-2">GENERAL WORK</div>
-            <div className="space-y-2">
-              {GENERAL_WORK_REPLACED.map((item) => {
-                const checked = !!(formData.permit_types as JsonMap)[item];
-                return (
-                  <label key={item} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleSimple('permit_types', item)}
-                    />
-                    <span>{item}</span>
-                  </label>
-                );
-              })}
-              <input
-                placeholder="Other (specify)"
-                className="mt-2 w-full border rounded px-2 py-1"
-                value={(formData.permit_types?.GENERAL_WORK_other as string) ?? ''}
-                onChange={(e) => setNestedText('permit_types', 'GENERAL_WORK_other', e.target.value)}
-              />
-            </div>
-          </div>
-
-          {/* Other remaining categories */}
-          {Object.entries(PERMIT_TYPES)
-            .filter(
-              ([key]) =>
-                !['VEHICLE_ENTRY', 'PRCS', 'NPRCS', 'DNCS', 'HOT_WORK', 'CONFINED_SPACE', 'GENERAL_WORK'].includes(
-                  key
-                )
-            )
-            .map(([category, items]) => (
-              <div key={category} className="border p-2 rounded">
-                <div className="font-medium mb-2">{category.replace(/_/g, ' ')}</div>
-                <div className="space-y-2">
-                  {items.map((item) => {
-                    const checked = !!(formData.permit_types as JsonMap)[item];
-                    return (
-                      <label key={item} className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleSimple('permit_types', item)}
-                        />
-                        <span>{item}</span>
-                      </label>
-                    );
-                  })}
-                  <input
-                    placeholder="Other (specify)"
-                    className="mt-2 w-full border rounded px-2 py-1"
-                    value={(formData.permit_types?.[`${category}_other`] as string) ?? ''}
-                    onChange={(e) => setNestedText('permit_types', `${category}_other`, e.target.value)}
-                  />
-                </div>
-              </div>
-            ))}
-        </div>
-      </div>
-
-      {/* Confined Space Hazard Assessment (PRCS only) */}
-      {isPRCS && (
+      {/* Wrap all interactive sections to block clicks when closed */}
+      <div className={isClosed ? 'opacity-60 pointer-events-none select-none' : ''}>
+        {/* Permit Details */}
         <div className="border rounded">
-          <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Hazard Assessment</div>
-          <div className="p-3 space-y-3">
-            <div className="text-xs text-gray-700">
-              check all that apply to the space or may be introduced by work
+          <div className="bg-kmGray px-3 py-2 font-semibold">Permit Details</div>
+          <div className="p-3 grid md:grid-cols-4 gap-4">
+            <div>
+              <label className="font-medium">Date Issued</label>
+              <input
+                name="date_issued"
+                type="date"
+                value={formData.date_issued}
+                min={defaultDate}
+                onChange={handleDateIssued}
+                className="mt-1 w-full border rounded px-2 py-1"
+                disabled={mode === 'edit'} // IMMUTABLE ON EDIT
+              />
             </div>
-            <div className="grid md:grid-cols-2 gap-3">
-              {CS_HAZARDS.map((hz) => {
-                const isOther = hz === 'Other';
-                const checked = !!(formData.confined_hazard_assessment?.[hz]);
-                return (
-                  <div key={hz} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleCSHazard(hz)}
-                    />
-                    <span>{hz}</span>
-                    {isOther && checked && (
-                      <input
-                        className="ml-2 border rounded px-2 py-1 flex-1"
-                        placeholder="Specify other hazard"
-                        value={formData.confined_hazard_assessment?.other_text ?? ''}
-                        onChange={(e) =>
-                          setNestedText('confined_hazard_assessment', 'other_text', e.target.value)
-                        }
-                      />
-                    )}
-                  </div>
-                );
-              })}
+            <div>
+              <label className="font-medium">Time Issued</label>
+              <input
+                name="time_issued"
+                type="time"
+                value={formData.time_issued}
+                min={minTime}
+                onChange={handleTimeIssued}
+                className="mt-1 w-full border rounded px-2 py-1"
+                disabled={mode === 'edit'} // IMMUTABLE ON EDIT
+              />
+            </div>
+            <div>
+              <label className="font-medium">Date Expires</label>
+              <input
+                name="date_expires"
+                type="date"
+                value={formData.date_expires}
+                onChange={handleText}
+                className="mt-1 w-full border rounded px-2 py-1"
+                readOnly
+              />
+            </div>
+            <div>
+              <label className="font-medium">Time Expires</label>
+              <input
+                name="time_expires"
+                type="time"
+                value={formData.time_expires}
+                onChange={handleText}
+                className="mt-1 w-full border rounded px-2 py-1"
+                readOnly
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="font-medium">Facility</label>
+              <input
+                name="facility"
+                value={formData.facility}
+                onChange={handleText}
+                className="mt-1 w-full border rounded px-2 py-1"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="font-medium">Location</label>
+              <input
+                name="location"
+                value={formData.location}
+                onChange={handleText}
+                className="mt-1 w-full border rounded px-2 py-1"
+              />
+            </div>
+
+            <div className="md:col-span-4">
+              <label className="font-medium">Contractor</label>
+              <input
+                name="contractor"
+                value={formData.contractor}
+                onChange={handleText}
+                className="mt-1 w-full border rounded px-2 py-1"
+              />
+            </div>
+
+            <div className="md:col-span-4">
+              <label className="font-medium">Description of Work</label>
+              <textarea
+                name="description_of_work"
+                rows={3}
+                value={formData.description_of_work}
+                onChange={handleText}
+                className="mt-1 w-full border rounded px-2 py-1"
+              />
             </div>
           </div>
         </div>
-      )}
 
-      {/* PPE */}
-      <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">
-          Personal Protective Equipment (Minimum PPE Requirements: Hard Hat, Safety Glasses, Gloves,
-          Safety Toe Footwear, and Reflective Vest)
-        </div>
-        <div className="p-3 grid md:grid-cols-2 gap-4">
-          {PPE_RENDER.map(({ key, label, items, postInputs }) => {
-            const catObj = (formData.additional_ppe as JsonMap)[key] ?? {};
-            const isSelected = (name: string) => !!catObj[name];
+        {/* Permit Types */}
+        <div className="border rounded">
+          <div className="bg-kmGray px-3 py-2 font-semibold">Permit Types</div>
 
-            return (
-              <div key={key} className="border p-2 rounded">
-                <div className="font-medium mb-2">{label}</div>
-                <div className="space-y-2">
-                  {items.map((item) => (
+          <div className="p-3 grid md:grid-cols-2 gap-4">
+            {/* HOT WORK */}
+            <div className="border p-2 rounded">
+              <div className="font-medium mb-2 text-red-600">HOT WORK</div>
+              <div className="space-y-2">
+                {hotWorkItems.map((item) => {
+                  const checked = !!(formData.permit_types as JsonMap)[item];
+                  const redItems = new Set(['Burning/Brazing/Welding', 'Grinding/Cutting', 'Use of torch']);
+                  return (
                     <label key={item} className="flex items-center gap-2">
                       <input
                         type="checkbox"
-                        checked={isSelected(item)}
-                        onChange={() => toggleNested('additional_ppe', key, item)}
+                        checked={checked}
+                        onChange={() => toggleSimple('permit_types', item)}
+                      />
+                      <span className={redItems.has(item) ? 'text-red-600 font-semibold' : ''}>{item}</span>
+                    </label>
+                  );
+                })}
+                {anyHotWorkSelected && (
+                  <div className="mt-2">
+                    <label className="font-medium">Exact area of Hot Work</label>
+                    <input
+                      className="mt-1 w-full border rounded px-2 py-1"
+                      value={(formData.permit_types?.hotwork_exact_area as string) ?? ''}
+                      onChange={(e) => setNestedText('permit_types', 'hotwork_exact_area', e.target.value)}
+                    />
+                  </div>
+                )}
+                <div className="mt-2">
+                  <label className="text-red-600 font-semibold">Other (specify)</label>
+                  <input
+                    className="mt-1 w-full border rounded px-2 py-1"
+                    value={(formData.permit_types?.hotwork_other as string) ?? ''}
+                    onChange={(e) => setNestedText('permit_types', 'hotwork_other', e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* CONFINED SPACE */}
+            <div className="border p-2 rounded">
+              <div className="font-medium mb-2 flex items-center gap-4">
+                <span>CONFINED SPACE</span>
+                <label className="flex items-center gap-1 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!!formData.permit_types.PRCS}
+                    onChange={() =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        permit_types: {
+                          ...(prev.permit_types ?? {}),
+                          PRCS: !prev.permit_types?.PRCS,
+                          NPRCS: false,
+                        },
+                      }))
+                    }
+                  />
+                  PRCS
+                </label>
+                <label className="flex items-center gap-1 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!!formData.permit_types.NPRCS}
+                    onChange={() =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        permit_types: {
+                          ...(prev.permit_types ?? {}),
+                          NPRCS: !prev.permit_types?.NPRCS,
+                          PRCS: false,
+                        },
+                      }))
+                    }
+                  />
+                  NPRCS
+                </label>
+              </div>
+              <div className="space-y-2">
+                {transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? []).map((item) => {
+                  const checked = !!(formData.permit_types as JsonMap)[item];
+                  return (
+                    <label key={item} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleSimple('permit_types', item)}
                       />
                       <span>{item}</span>
                     </label>
-                  ))}
-
-                  {/* Conditional extra inputs */}
-                  {postInputs?.map((pi) => {
-                    const show = pi.dependsOn.some(isSelected);
-                    if (!show) return null;
-                    return (
-                      <div key={pi.key} className="mt-2">
-                        <label className="font-medium">{pi.label}</label>
-                        <input
-                          className="mt-1 w-full border rounded px-2 py-1"
-                          placeholder={pi.placeholder ?? ''}
-                          value={(catObj?.[pi.key] as string) ?? ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setFormData((prev) => {
-                              const sec = (prev.additional_ppe as JsonMap) ?? {};
-                              const origCat = sec[key] ?? {};
-                              return {
-                                ...prev,
-                                additional_ppe: {
-                                  ...sec,
-                                  [key]: { ...origCat, [pi.key]: val },
-                                },
-                              };
-                            });
-                          }}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
+                  );
+                })}
+                <input
+                  placeholder="Other (specify)"
+                  className="mt-2 w-full border rounded px-2 py-1"
+                  value={(formData.permit_types?.confined_other as string) ?? ''}
+                  onChange={(e) => setNestedText('permit_types', 'confined_other', e.target.value)}
+                />
               </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Hazard Reduction & Equipment Condition */}
-      <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Hazard Reduction &amp; Equipment Condition</div>
-        <div className="p-3 grid md:grid-cols-2 gap-6">
-          {/* Hazard Reduction side */}
-          <div>
-            <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
-              <div>Hazard Reduction</div>
-              <div className="text-center">Yes</div>
-              <div className="text-center">N/A</div>
             </div>
-            <div className="space-y-1">
-              {HAZ_LIST.map((item) => {
-                const isOther = item.toLowerCase().startsWith('other');
-                const isRadio = item === 'Radio communication';
-                return (
-                  <div
-                    key={item}
-                    className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1"
-                  >
-                    <div className="text-sm">{item}</div>
-                    <div className="flex justify-center">
+          </div>
+
+          {/* Remaining categories */}
+          <div className="px-3 pb-3 grid md:grid-cols-2 gap-4">
+            {/* GENERAL WORK */}
+            <div className="border p-2 rounded">
+              <div className="font-medium mb-2">GENERAL WORK</div>
+              <div className="space-y-2">
+                {GENERAL_WORK_REPLACED.map((item) => {
+                  const checked = !!(formData.permit_types as JsonMap)[item];
+                  return (
+                    <label key={item} className="flex items-center gap-2">
                       <input
                         type="checkbox"
-                        checked={getYes('hazard_reduction', item)}
-                        onChange={(e) => setYesNA('hazard_reduction', item, 'yes', e.target.checked)}
+                        checked={checked}
+                        onChange={() => toggleSimple('permit_types', item)}
                       />
-                    </div>
-                    <div className="flex justify-center">
-                      <input
-                        type="checkbox"
-                        checked={getNA('hazard_reduction', item)}
-                        onChange={(e) => setYesNA('hazard_reduction', item, 'na', e.target.checked)}
-                      />
-                    </div>
+                      <span>{item}</span>
+                    </label>
+                  );
+                })}
+                <input
+                  placeholder="Other (specify)"
+                  className="mt-2 w-full border rounded px-2 py-1"
+                  value={(formData.permit_types?.GENERAL_WORK_other as string) ?? ''}
+                  onChange={(e) => setNestedText('permit_types', 'GENERAL_WORK_other', e.target.value)}
+                />
+              </div>
+            </div>
 
-                    {isOther && getYes('hazard_reduction', item) && (
-                      <div className="col-span-3 mt-1">
-                        <label className="text-sm font-medium">Other (specify)</label>
-                        <input
-                          className="mt-1 w-full border rounded px-2 py-1"
-                          value={(formData.hazard_reduction?.other_text as string) ?? ''}
-                          onChange={(e) => setNestedText('hazard_reduction', 'other_text', e.target.value)}
-                        />
-                      </div>
-                    )}
-
-                    {isRadio && getYes('hazard_reduction', item) && (
-                      <div className="col-span-3 mt-1">
-                        <label className="text-sm font-medium">Radio Channel #</label>
-                        <input
-                          className="mt-1 w-40 border rounded px-2 py-1"
-                          value={(formData.hazard_reduction?.radio_channel as string) ?? ''}
-                          onChange={(e) => setNestedText('hazard_reduction', 'radio_channel', e.target.value)}
-                        />
-                      </div>
-                    )}
+            {/* Other categories */}
+            {Object.entries(PERMIT_TYPES)
+              .filter(
+                ([key]) =>
+                  !['VEHICLE_ENTRY', 'PRCS', 'NPRCS', 'DNCS', 'HOT_WORK', 'CONFINED_SPACE', 'GENERAL_WORK'].includes(
+                    key
+                  )
+              )
+              .map(([category, items]) => (
+                <div key={category} className="border p-2 rounded">
+                  <div className="font-medium mb-2">{category.replace(/_/g, ' ')}</div>
+                  <div className="space-y-2">
+                    {items.map((item) => {
+                      const checked = !!(formData.permit_types as JsonMap)[item];
+                      return (
+                        <label key={item} className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleSimple('permit_types', item)}
+                          />
+                          <span>{item}</span>
+                        </label>
+                      );
+                    })}
+                    <input
+                      placeholder="Other (specify)"
+                      className="mt-2 w-full border rounded px-2 py-1"
+                      value={(formData.permit_types?.[`${category}_other`] as string) ?? ''}
+                      onChange={(e) => setNestedText('permit_types', `${category}_other`, e.target.value)}
+                    />
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              ))}
           </div>
+        </div>
 
-          {/* Equipment Condition side */}
-          <div>
-            <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
-              <div>Equipment Condition</div>
-              <div className="text-center">Yes</div>
-              <div className="text-center">N/A</div>
-            </div>
-            <div className="space-y-1">
-              {EQUIPMENT_CONDITION_NEW.map((item) => {
-                const isOther = item.toLowerCase().startsWith('other');
-                return (
-                  <div
-                    key={item}
-                    className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1"
-                  >
-                    <div className="text-sm">{item}</div>
-                    <div className="flex justify-center">
+        {/* Confined Space Hazard Assessment (PRCS only) */}
+        {isPRCS && (
+          <div className="border rounded">
+            <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Hazard Assessment</div>
+            <div className="p-3 space-y-3">
+              <div className="text-xs text-gray-700">
+                check all that apply to the space or may be introduced by work
+              </div>
+              <div className="grid md:grid-cols-2 gap-3">
+                {CS_HAZARDS.map((hz) => {
+                  const isOther = hz === 'Other';
+                  const checked = !!(formData.confined_hazard_assessment?.[hz]);
+                  return (
+                    <div key={hz} className="flex items-center gap-2">
                       <input
                         type="checkbox"
-                        checked={getYes('equipment_condition', item)}
-                        onChange={(e) => setYesNA('equipment_condition', item, 'yes', e.target.checked)}
+                        checked={checked}
+                        onChange={() => toggleCSHazard(hz)}
                       />
-                    </div>
-                    <div className="flex justify-center">
-                      <input
-                        type="checkbox"
-                        checked={getNA('equipment_condition', item)}
-                        onChange={(e) => setYesNA('equipment_condition', item, 'na', e.target.checked)}
-                      />
-                    </div>
-
-                    {isOther && getYes('equipment_condition', item) && (
-                      <div className="col-span-3 mt-1">
-                        <label className="text-sm font-medium">Other (specify)</label>
+                      <span>{hz}</span>
+                      {isOther && checked && (
                         <input
-                          className="mt-1 w-full border rounded px-2 py-1"
-                          value={(formData.equipment_condition?.other_text as string) ?? ''}
-                          onChange={(e) => setNestedText('equipment_condition', 'other_text', e.target.value)}
+                          className="ml-2 border rounded px-2 py-1 flex-1"
+                          placeholder="Specify other hazard"
+                          value={formData.confined_hazard_assessment?.other_text ?? ''}
+                          onChange={(e) =>
+                            setNestedText('confined_hazard_assessment', 'other_text', e.target.value)
+                          }
                         />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        )}
 
-      {/* Energy Control (N/A default) */}
-      <div className={['border rounded', energyNA ? 'opacity-60 pointer-events-none' : ''].join(' ')}>
-        <div className="bg-kmGray px-3 py-2 font-semibold flex items-center justify-between">
-          <span>Energy Control</span>
-          <label className="text-sm flex items-center gap-2 pr-2 pointer-events-auto">
-            <input type="checkbox" checked={energyNA} onChange={() => setEnergyNA((v) => !v)} />
-            N/A
-          </label>
-        </div>
-        <div className="p-3 grid md:grid-cols-3 gap-4 items-center">
-          <div className="border p-2 rounded">
-            <div className="font-medium mb-2">Verified Zero-Energy State</div>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={!!formData.energy_control.zero_energy}
-                onChange={() =>
-                  setNestedText('energy_control', 'zero_energy', !formData.energy_control?.zero_energy)
-                }
-                disabled={energyNA}
-              />
-              <span>Yes</span>
-            </label>
+        {/* PPE */}
+        <div className="border rounded">
+          <div className="bg-kmGray px-3 py-2 font-semibold">
+            Personal Protective Equipment (Minimum PPE Requirements: Hard Hat, Safety Glasses, Gloves,
+            Safety Toe Footwear, and Reflective Vest)
           </div>
-
-          <div className="border p-2 rounded">
-            <div className="font-medium mb-2">Personal Locks Hung</div>
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={!!formData.energy_control.personal_locks}
-                onChange={() =>
-                  setNestedText('energy_control', 'personal_locks', !formData.energy_control?.personal_locks)
-                }
-                disabled={energyNA}
-              />
-              <span>Yes</span>
-            </label>
-          </div>
-
-          <div className="border p-2 rounded">
-            <label className="font-medium">Lock Box Number</label>
-            <input
-              className="mt-1 w-40 border rounded px-2 py-1"
-              value={formData.energy_control.lock_box_number ?? ''}
-              onChange={(e) => setNestedText('energy_control', 'lock_box_number', e.target.value)}
-              disabled={energyNA}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Special Conditions */}
-      <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Special Conditions</div>
-        <div className="p-3">
-          <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
-            <div>Item</div>
-            <div className="text-center">Yes</div>
-            <div className="text-center">N/A</div>
-          </div>
-
-          <div className="space-y-1">
-            {SPECIAL_LIST.map((item, idx) => {
-              const isComm = item === 'Communication with entrants has been determined';
-              const isFireWatch = item === 'Fire Watch required and assigned';
-              const yes = getSCYes(item);
-              const na = getSCNA(item);
-
-              const isRed =
-                scRedStartIdx >= 0 && scRedEndIdx >= 0 && idx >= scRedStartIdx && idx <= scRedEndIdx;
+          <div className="p-3 grid md:grid-cols-2 gap-4">
+            {PPE_RENDER.map(({ key, label, items, postInputs }) => {
+              const catObj = (formData.additional_ppe as JsonMap)[key] ?? {};
+              const isSelected = (name: string) => !!catObj[name];
 
               return (
-                <div key={item} className="border rounded px-2 py-1">
-                  <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center">
-                    <div className={`text-sm flex items-center gap-2 flex-wrap ${isRed ? 'text-red-600' : ''}`}>
-                      <span>{item}</span>
-                      {isComm && yes && (
-                        <span className="flex items-center gap-1">
-                          <span>Comm. Type:</span>
-                          <input
-                            className="w-40 border rounded px-2 py-0.5"
-                            value={(formData.special_conditions?.comm_type as string) ?? ''}
-                            onChange={(e) => setNestedText('special_conditions', 'comm_type', e.target.value)}
-                          />
-                        </span>
-                      )}
-                    </div>
+                <div key={key} className="border p-2 rounded">
+                  <div className="font-medium mb-2">{label}</div>
+                  <div className="space-y-2">
+                    {items.map((item) => (
+                      <label key={item} className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={isSelected(item)}
+                          onChange={() => toggleNested('additional_ppe', key, item)}
+                        />
+                        <span>{item}</span>
+                      </label>
+                    ))}
 
-                    <div className="flex justify-center">
-                      <input
-                        type="checkbox"
-                        checked={yes}
-                        onChange={(e) => setSCYesNA(item, 'yes', e.target.checked)}
-                      />
-                    </div>
-                    <div className="flex justify-center">
-                      <input
-                        type="checkbox"
-                        checked={na}
-                        onChange={(e) => setSCYesNA(item, 'na', e.target.checked)}
-                      />
-                    </div>
-                  </div>
-
-                  {isFireWatch && yes && (
-                    <div className="mt-2 grid md:grid-cols-2 gap-4">
-                      <div className="flex items-center gap-4">
-                        <span className="text-sm font-medium">
-                          Fire watch duration after hot work completed:
-                        </span>
-                        <label className="flex items-center gap-1">
+                    {/* Conditional extra inputs */}
+                    {postInputs?.map((pi) => {
+                      const show = pi.dependsOn.some(isSelected);
+                      if (!show) return null;
+                      return (
+                        <div key={pi.key} className="mt-2">
+                          <label className="font-medium">{pi.label}</label>
                           <input
-                            type="checkbox"
-                            checked={formData.special_conditions.fire_watch_after === '30'}
-                            onChange={() => setNestedText('special_conditions', 'fire_watch_after', '30')}
-                          />
-                          30 min
-                        </label>
-                        <label className="flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            checked={formData.special_conditions.fire_watch_after === '>30'}
-                            onChange={() => setNestedText('special_conditions', 'fire_watch_after', '>30')}
-                          />
-                          {'>'}30 min
-                        </label>
-                      </div>
-
-                      {formData.special_conditions.fire_watch_after === '>30' && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium">Length of time:</span>
-                          <input
-                            className="w-24 border rounded px-2 py-0.5"
-                            value={(formData.special_conditions.fire_watch_length as string) ?? ''}
-                            onChange={(e) =>
-                              setNestedText('special_conditions', 'fire_watch_length', e.target.value)
-                            }
+                            className="mt-1 w-full border rounded px-2 py-1"
+                            placeholder={pi.placeholder ?? ''}
+                            value={(catObj?.[pi.key] as string) ?? ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setFormData((prev) => {
+                                const sec = (prev.additional_ppe as JsonMap) ?? {};
+                                const origCat = sec[key] ?? {};
+                                return {
+                                  ...prev,
+                                  additional_ppe: {
+                                    ...sec,
+                                    [key]: { ...origCat, [pi.key]: val },
+                                  },
+                                };
+                              });
+                            }}
                           />
                         </div>
-                      )}
-                    </div>
-                  )}
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })}
           </div>
-
-          <div className="mt-3">
-            <label className="font-medium">Other special conditions</label>
-            <input
-              className="mt-1 w-full border rounded px-2 py-1"
-              value={(formData.special_conditions?.other_text as string) ?? ''}
-              onChange={(e) => setNestedText('special_conditions', 'other_text', e.target.value)}
-            />
-          </div>
         </div>
-      </div>
 
-      {/* Confined Space Rescue Plan (PRCS only) */}
-      {isPRCS && (
+        {/* Hazard Reduction & Equipment Condition */}
         <div className="border rounded">
-          <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Rescue Plan</div>
-          <div className="p-3 space-y-4">
-            <div className="flex items-center gap-6">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={!!formData.confined_rescue_plan?.non_entry}
-                  onChange={() =>
-                    setNestedText(
-                      'confined_rescue_plan',
-                      'non_entry',
-                      !(formData.confined_rescue_plan?.non_entry ?? false)
-                    )
-                  }
-                />
-                Non-Entry Rescue Plan
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={!!formData.confined_rescue_plan?.entry}
-                  onChange={() =>
-                    setNestedText(
-                      'confined_rescue_plan',
-                      'entry',
-                      !(formData.confined_rescue_plan?.entry ?? false)
-                    )
-                  }
-                />
-                Entry Rescue Plan
-              </label>
-            </div>
-
+          <div className="bg-kmGray px-3 py-2 font-semibold">Hazard Reduction &amp; Equipment Condition</div>
+          <div className="p-3 grid md:grid-cols-2 gap-6">
+            {/* Hazard Reduction */}
             <div>
-              <label className="font-medium">Rescue Plan Details</label>
-              <textarea
-                rows={4}
-                className="mt-1 w-full border rounded px-2 py-1"
-                value={formData.confined_rescue_plan?.notes ?? ''}
-                onChange={(e) => setNestedText('confined_rescue_plan', 'notes', e.target.value)}
-              />
+              <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
+                <div>Hazard Reduction</div>
+                <div className="text-center">Yes</div>
+                <div className="text-center">N/A</div>
+              </div>
+              <div className="space-y-1">
+                {HAZ_LIST.map((item) => {
+                  const isOther = item.toLowerCase().startsWith('other');
+                  const isRadio = item === 'Radio communication';
+                  return (
+                    <div
+                      key={item}
+                      className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1"
+                    >
+                      <div className="text-sm">{item}</div>
+                      <div className="flex justify-center">
+                        <input
+                          type="checkbox"
+                          checked={getYes('hazard_reduction', item)}
+                          onChange={(e) => setYesNA('hazard_reduction', item, 'yes', e.target.checked)}
+                        />
+                      </div>
+                      <div className="flex justify-center">
+                        <input
+                          type="checkbox"
+                          checked={getNA('hazard_reduction', item)}
+                          onChange={(e) => setYesNA('hazard_reduction', item, 'na', e.target.checked)}
+                        />
+                      </div>
+
+                      {isOther && getYes('hazard_reduction', item) && (
+                        <div className="col-span-3 mt-1">
+                          <label className="text-sm font-medium">Other (specify)</label>
+                          <input
+                            className="mt-1 w-full border rounded px-2 py-1"
+                            value={(formData.hazard_reduction?.other_text as string) ?? ''}
+                            onChange={(e) => setNestedText('hazard_reduction', 'other_text', e.target.value)}
+                          />
+                        </div>
+                      )}
+
+                      {isRadio && getYes('hazard_reduction', item) && (
+                        <div className="col-span-3 mt-1">
+                          <label className="text-sm font-medium">Radio Channel #</label>
+                          <input
+                            className="mt-1 w-40 border rounded px-2 py-1"
+                            value={(formData.hazard_reduction?.radio_channel as string) ?? ''}
+                            onChange={(e) => setNestedText('hazard_reduction', 'radio_channel', e.target.value)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-4 items-center">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={!!formData.confined_rescue_plan?.reviewed}
-                  onChange={() =>
-                    setNestedText(
-                      'confined_rescue_plan',
-                      'reviewed',
-                      !(formData.confined_rescue_plan?.reviewed ?? false)
-                    )
-                  }
-                />
-                Authorizing Entry Supervisor has developed or reviewed the rescue plan
-              </label>
+            {/* Equipment Condition */}
+            <div>
+              <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
+                <div>Equipment Condition</div>
+                <div className="text-center">Yes</div>
+                <div className="text-center">N/A</div>
+              </div>
+              <div className="space-y-1">
+                {EQUIPMENT_CONDITION_NEW.map((item) => {
+                  const isOther = item.toLowerCase().startsWith('other');
+                  return (
+                    <div
+                      key={item}
+                      className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1"
+                    >
+                      <div className="text-sm">{item}</div>
+                      <div className="flex justify-center">
+                        <input
+                          type="checkbox"
+                          checked={getYes('equipment_condition', item)}
+                          onChange={(e) => setYesNA('equipment_condition', item, 'yes', e.target.checked)}
+                        />
+                      </div>
+                      <div className="flex justify-center">
+                        <input
+                          type="checkbox"
+                          checked={getNA('equipment_condition', item)}
+                          onChange={(e) => setYesNA('equipment_condition', item, 'na', e.target.checked)}
+                        />
+                      </div>
 
-              <div>
-                <label className="font-medium">Entry Supervisor Initials</label>
-                <input
-                  className="mt-1 w-40 border rounded px-2 py-1"
-                  value={formData.confined_rescue_plan?.supervisor_initials ?? ''}
-                  onChange={(e) =>
-                    setNestedText('confined_rescue_plan', 'supervisor_initials', e.target.value)
-                  }
-                />
+                      {isOther && getYes('equipment_condition', item) && (
+                        <div className="col-span-3 mt-1">
+                          <label className="text-sm font-medium">Other (specify)</label>
+                          <input
+                            className="mt-1 w-full border rounded px-2 py-1"
+                            value={(formData.equipment_condition?.other_text as string) ?? ''}
+                            onChange={(e) => setNestedText('equipment_condition', 'other_text', e.target.value)}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
         </div>
-      )}
 
-      {/* Confined Space Authorized Entrant(s) Log (PRCS only) */}
-      {isPRCS && (
-        <div className="border rounded">
-          <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Entrant(s) Log</div>
-          <div className="p-3 space-y-3">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="rounded bg-blue-600 text-white px-3 py-1 text-sm"
-                onClick={addEntrantRow}
-              >
-                Add a name
-              </button>
-              <button
-                type="button"
-                className="rounded bg-blue-600 text-white px-3 py-1 text-sm"
-                onClick={addEntrantTimePair}
-              >
-                Add Time In/Out
-              </button>
+        {/* Energy Control (N/A default) */}
+        <div className={['border rounded', energyNA ? 'opacity-60 pointer-events-none' : ''].join(' ')}>
+          <div className="bg-kmGray px-3 py-2 font-semibold flex items-center justify-between">
+            <span>Energy Control</span>
+            <label className="text-sm flex items-center gap-2 pr-2 pointer-events-auto">
+              <input type="checkbox" checked={energyNA} onChange={() => setEnergyNA((v) => !v)} />
+              N/A
+            </label>
+          </div>
+          <div className="p-3 grid md:grid-cols-3 gap-4 items-center">
+            <div className="border p-2 rounded">
+              <div className="font-medium mb-2">Verified Zero-Energy State</div>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={!!formData.energy_control.zero_energy}
+                  onChange={() =>
+                    setNestedText('energy_control', 'zero_energy', !formData.energy_control?.zero_energy)
+                  }
+                  disabled={energyNA}
+                />
+                <span>Yes</span>
+              </label>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr>
-                    <th className="border px-2 py-1 text-left min-w-[220px] w-64 whitespace-nowrap">
-                      Name
-                    </th>
-                    {/* Interleaved headers: In1, Out1, In2, Out2, ... */}
-                    {Array.from({ length: formData.confined_entrants?.time_pairs ?? 3 }).flatMap((_, i) => [
-                      <th key={`h-in-${i}`} className="border px-2 py-1 text-left">Time In</th>,
-                      <th key={`h-out-${i}`} className="border px-2 py-1 text-left">Time Out</th>,
-                    ])}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(formData.confined_entrants?.rows ?? []).map((row: any, rIdx: number) => (
-                    <tr key={`row-${rIdx}`}>
-                      <td className="border px-2 py-1 min-w-[220px] w-64 whitespace-nowrap">
+            <div className="border p-2 rounded">
+              <div className="font-medium mb-2">Personal Locks Hung</div>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={!!formData.energy_control.personal_locks}
+                  onChange={() =>
+                    setNestedText('energy_control', 'personal_locks', !formData.energy_control?.personal_locks)
+                  }
+                  disabled={energyNA}
+                />
+                <span>Yes</span>
+              </label>
+            </div>
+
+            <div className="border p-2 rounded">
+              <label className="font-medium">Lock Box Number</label>
+              <input
+                className="mt-1 w-40 border rounded px-2 py-1"
+                value={formData.energy_control.lock_box_number ?? ''}
+                onChange={(e) => setNestedText('energy_control', 'lock_box_number', e.target.value)}
+                disabled={energyNA}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Special Conditions */}
+        <div className="border rounded">
+          <div className="bg-kmGray px-3 py-2 font-semibold">Special Conditions</div>
+          <div className="p-3">
+            <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
+              <div>Item</div>
+              <div className="text-center">Yes</div>
+              <div className="text-center">N/A</div>
+            </div>
+
+            <div className="space-y-1">
+              {SPECIAL_LIST.map((item, idx) => {
+                const isComm = item === 'Communication with entrants has been determined';
+                const isFireWatch = item === 'Fire Watch required and assigned';
+                const yes = getSCYes(item);
+                const na = getSCNA(item);
+
+                const isRed =
+                  scRedStartIdx >= 0 && scRedEndIdx >= 0 && idx >= scRedStartIdx && idx <= scRedEndIdx;
+
+                return (
+                  <div key={item} className="border rounded px-2 py-1">
+                    <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center">
+                      <div className={`text-sm flex items-center gap-2 flex-wrap ${isRed ? 'text-red-600' : ''}`}>
+                        <span>{item}</span>
+                        {isComm && yes && (
+                          <span className="flex items-center gap-1">
+                            <span>Comm. Type:</span>
+                            <input
+                              className="w-40 border rounded px-2 py-0.5"
+                              value={(formData.special_conditions?.comm_type as string) ?? ''}
+                              onChange={(e) => setNestedText('special_conditions', 'comm_type', e.target.value)}
+                            />
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex justify-center">
                         <input
-                          className="w-full border rounded px-2 py-1"
-                          value={row.name}
-                          onChange={(e) => setEntrantName(rIdx, e.target.value)}
+                          type="checkbox"
+                          checked={yes}
+                          onChange={(e) => setSCYesNA(item, 'yes', e.target.checked)}
                         />
-                      </td>
-                      {row.times.flatMap((t: any, pIdx: number) => [
-                        <td key={`in-${rIdx}-${pIdx}`} className="border px-2 py-1">
-                          <input
-                            type="time"
-                            className="w-full border rounded px-2 py-1"
-                            value={t.in}
-                            onChange={(e) => setEntrantTime(rIdx, pIdx, 'in', e.target.value)}
-                          />
-                        </td>,
-                        <td key={`out-${rIdx}-${pIdx}`} className="border px-2 py-1">
-                          <input
-                            type="time"
-                            className="w-full border rounded px-2 py-1"
-                            value={t.out}
-                            onChange={(e) => setEntrantTime(rIdx, pIdx, 'out', e.target.value)}
-                          />
-                        </td>,
+                      </div>
+                      <div className="flex justify-center">
+                        <input
+                          type="checkbox"
+                          checked={na}
+                          onChange={(e) => setSCYesNA(item, 'na', e.target.checked)}
+                        />
+                      </div>
+                    </div>
+
+                    {isFireWatch && yes && (
+                      <div className="mt-2 grid md:grid-cols-2 gap-4">
+                        <div className="flex items-center gap-4">
+                          <span className="text-sm font-medium">
+                            Fire watch duration after hot work completed:
+                          </span>
+                          <label className="flex items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={formData.special_conditions.fire_watch_after === '30'}
+                              onChange={() => setNestedText('special_conditions', 'fire_watch_after', '30')}
+                            />
+                            30 min
+                          </label>
+                          <label className="flex items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={formData.special_conditions.fire_watch_after === '>30'}
+                              onChange={() => setNestedText('special_conditions', 'fire_watch_after', '>30')}
+                            />
+                            {'>'}30 min
+                          </label>
+                        </div>
+
+                        {formData.special_conditions.fire_watch_after === '>30' && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">Length of time:</span>
+                            <input
+                              className="w-24 border rounded px-2 py-0.5"
+                              value={(formData.special_conditions.fire_watch_length as string) ?? ''}
+                              onChange={(e) =>
+                                setNestedText('special_conditions', 'fire_watch_length', e.target.value)
+                              }
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-3">
+              <label className="font-medium">Other special conditions</label>
+              <input
+                className="mt-1 w-full border rounded px-2 py-1"
+                value={(formData.special_conditions?.other_text as string) ?? ''}
+                onChange={(e) => setNestedText('special_conditions', 'other_text', e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Confined Space Rescue Plan (PRCS only) */}
+        {isPRCS && (
+          <div className="border rounded">
+            <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Rescue Plan</div>
+            <div className="p-3 space-y-4">
+              <div className="flex items-center gap-6">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!formData.confined_rescue_plan?.non_entry}
+                    onChange={() =>
+                      setNestedText(
+                        'confined_rescue_plan',
+                        'non_entry',
+                        !(formData.confined_rescue_plan?.non_entry ?? false)
+                      )
+                    }
+                  />
+                  Non-Entry Rescue Plan
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!formData.confined_rescue_plan?.entry}
+                    onChange={() =>
+                      setNestedText(
+                        'confined_rescue_plan',
+                        'entry',
+                        !(formData.confined_rescue_plan?.entry ?? false)
+                      )
+                    }
+                  />
+                  Entry Rescue Plan
+                </label>
+              </div>
+
+              <div>
+                <label className="font-medium">Rescue Plan Details</label>
+                <textarea
+                  rows={4}
+                  className="mt-1 w-full border rounded px-2 py-1"
+                  value={formData.confined_rescue_plan?.notes ?? ''}
+                  onChange={(e) => setNestedText('confined_rescue_plan', 'notes', e.target.value)}
+                />
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4 items-center">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!!formData.confined_rescue_plan?.reviewed}
+                    onChange={() =>
+                      setNestedText(
+                        'confined_rescue_plan',
+                        'reviewed',
+                        !(formData.confined_rescue_plan?.reviewed ?? false)
+                      )
+                    }
+                  />
+                  Authorizing Entry Supervisor has developed or reviewed the rescue plan
+                </label>
+
+                <div>
+                  <label className="font-medium">Entry Supervisor Initials</label>
+                  <input
+                    className="mt-1 w-40 border rounded px-2 py-1"
+                    value={formData.confined_rescue_plan?.supervisor_initials ?? ''}
+                    onChange={(e) =>
+                      setNestedText('confined_rescue_plan', 'supervisor_initials', e.target.value)
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confined Space Authorized Entrant(s) Log (PRCS only) */}
+        {isPRCS && (
+          <div className="border rounded">
+            <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Entrant(s) Log</div>
+            <div className="p-3 space-y-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded bg-blue-600 text-white px-3 py-1 text-sm"
+                  onClick={addEntrantRow}
+                >
+                  Add a name
+                </button>
+                <button
+                  type="button"
+                  className="rounded bg-blue-600 text-white px-3 py-1 text-sm"
+                  onClick={addEntrantTimePair}
+                >
+                  Add Time In/Out
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="border px-2 py-1 text-left min-w-[220px] w-64 whitespace-nowrap">
+                        Name
+                      </th>
+                      {Array.from({ length: formData.confined_entrants?.time_pairs ?? 3 }).flatMap((_, i) => [
+                        <th key={`h-in-${i}`} className="border px-2 py-1 text-left">Time In</th>,
+                        <th key={`h-out-${i}`} className="border px-2 py-1 text-left">Time Out</th>,
                       ])}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {(formData.confined_entrants?.rows ?? []).map((row: any, rIdx: number) => (
+                      <tr key={`row-${rIdx}`}>
+                        <td className="border px-2 py-1 min-w-[220px] w-64 whitespace-nowrap">
+                          <input
+                            className="w-full border rounded px-2 py-1"
+                            value={row.name}
+                            onChange={(e) => setEntrantName(rIdx, e.target.value)}
+                          />
+                        </td>
+                        {row.times.flatMap((t: any, pIdx: number) => [
+                          <td key={`in-${rIdx}-${pIdx}`} className="border px-2 py-1">
+                            <input
+                              type="time"
+                              className="w-full border rounded px-2 py-1"
+                              value={t.in}
+                              onChange={(e) => setEntrantTime(rIdx, pIdx, 'in', e.target.value)}
+                            />
+                          </td>,
+                          <td key={`out-${rIdx}-${pIdx}`} className="border px-2 py-1">
+                            <input
+                              type="time"
+                              className="w-full border rounded px-2 py-1"
+                              value={t.out}
+                              onChange={(e) => setEntrantTime(rIdx, pIdx, 'out', e.target.value)}
+                            />
+                          </td>,
+                        ])}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
             </div>
-
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Confined Space Authorized Attendant(s) (PRCS only) */}
-      {isPRCS && (
-        <div className="border rounded">
-          <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Attendant(s)</div>
-          <div className="p-3">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr>
-                    <th className="border px-2 py-1 text-left">Name</th>
-                    <th className="border px-2 py-1 text-left">Start Time</th>
-                    <th className="border px-2 py-1 text-left">Stop Time</th>
-                    <th className="border px-2 py-1 text-left">Start Time</th>
-                    <th className="border px-2 py-1 text-left">Stop Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(formData.confined_attendants?.rows ?? []).map((row: any, rIdx: number) => (
-                    <tr key={`att-${rIdx}`}>
-                      <td className="border px-2 py-1">
-                        <input
-                          className="w-full border rounded px-2 py-1"
-                          value={row.name}
-                          onChange={(e) => setAttendantName('confined_attendants', rIdx, e.target.value)}
-                        />
-                      </td>
-                      {row.times.map((t: any, pIdx: number) => (
-                        <td key={`att-${rIdx}-${pIdx}-start`} className="border px-2 py-1">
-                          <input
-                            type="time"
-                            className="w-full border rounded px-2 py-1"
-                            value={t.start}
-                            onChange={(e) =>
-                              setAttendantTime('confined_attendants', rIdx, pIdx, 'start', e.target.value)
-                            }
-                          />
-                        </td>
-                      ))}
-                      {row.times.map((t: any, pIdx: number) => (
-                        <td key={`att-${rIdx}-${pIdx}-stop`} className="border px-2 py-1">
-                          <input
-                            type="time"
-                            className="w-full border rounded px-2 py-1"
-                            value={t.stop}
-                            onChange={(e) =>
-                              setAttendantTime('confined_attendants', rIdx, pIdx, 'stop', e.target.value)
-                            }
-                          />
-                        </td>
-                      ))}
+        {/* Confined Space Authorized Attendant(s) (PRCS only) */}
+        {isPRCS && (
+          <div className="border rounded">
+            <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Authorized Attendant(s)</div>
+            <div className="p-3">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="border px-2 py-1 text-left">Name</th>
+                      <th className="border px-2 py-1 text-left">Start Time</th>
+                      <th className="border px-2 py-1 text-left">Stop Time</th>
+                      <th className="border px-2 py-1 text-left">Start Time</th>
+                      <th className="border px-2 py-1 text-left">Stop Time</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {(formData.confined_attendants?.rows ?? []).map((row: any, rIdx: number) => (
+                      <tr key={`att-${rIdx}`}>
+                        <td className="border px-2 py-1">
+                          <input
+                            className="w-full border rounded px-2 py-1"
+                            value={row.name}
+                            onChange={(e) => setAttendantName('confined_attendants', rIdx, e.target.value)}
+                          />
+                        </td>
+                        {row.times.map((t: any, pIdx: number) => (
+                          <td key={`att-${rIdx}-${pIdx}-start`} className="border px-2 py-1">
+                            <input
+                              type="time"
+                              className="w-full border rounded px-2 py-1"
+                              value={t.start}
+                              onChange={(e) =>
+                                setAttendantTime('confined_attendants', rIdx, pIdx, 'start', e.target.value)
+                              }
+                            />
+                          </td>
+                        ))}
+                        {row.times.map((t: any, pIdx: number) => (
+                          <td key={`att-${rIdx}-${pIdx}-stop`} className="border px-2 py-1">
+                            <input
+                              type="time"
+                              className="w-full border rounded px-2 py-1"
+                              value={t.stop}
+                              onChange={(e) =>
+                                setAttendantTime('confined_attendants', rIdx, pIdx, 'stop', e.target.value)
+                              }
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Confined Space Rescue Team (PRCS only) */}
-      {isPRCS && (
-        <div className="border rounded">
-          <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Rescue Team</div>
-          <div className="p-3">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr>
-                    <th className="border px-2 py-1 text-left">Name</th>
-                    <th className="border px-2 py-1 text-left">Start Time</th>
-                    <th className="border px-2 py-1 text-left">Stop Time</th>
-                    <th className="border px-2 py-1 text-left">Start Time</th>
-                    <th className="border px-2 py-1 text-left">Stop Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(formData.confined_rescue_team?.rows ?? []).map((row: any, rIdx: number) => (
-                    <tr key={`team-${rIdx}`}>
-                      <td className="border px-2 py-1">
-                        <input
-                          className="w-full border rounded px-2 py-1"
-                          value={row.name}
-                          onChange={(e) => setAttendantName('confined_rescue_team', rIdx, e.target.value)}
-                        />
-                      </td>
-                      {row.times.map((t: any, pIdx: number) => (
-                        <td key={`team-${rIdx}-${pIdx}-start`} className="border px-2 py-1">
-                          <input
-                            type="time"
-                            className="w-full border rounded px-2 py-1"
-                            value={t.start}
-                            onChange={(e) =>
-                              setAttendantTime('confined_rescue_team', rIdx, pIdx, 'start', e.target.value)
-                            }
-                          />
-                        </td>
-                      ))}
-                      {row.times.map((t: any, pIdx: number) => (
-                        <td key={`team-${rIdx}-${pIdx}-stop`} className="border px-2 py-1">
-                          <input
-                            type="time"
-                            className="w-full border rounded px-2 py-1"
-                            value={t.stop}
-                            onChange={(e) =>
-                              setAttendantTime('confined_rescue_team', rIdx, pIdx, 'stop', e.target.value)
-                            }
-                          />
-                        </td>
-                      ))}
+        {/* Confined Space Rescue Team (PRCS only) */}
+        {isPRCS && (
+          <div className="border rounded">
+            <div className="bg-kmGray px-3 py-2 font-semibold">Confined Space Rescue Team</div>
+            <div className="p-3">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="border px-2 py-1 text-left">Name</th>
+                      <th className="border px-2 py-1 text-left">Start Time</th>
+                      <th className="border px-2 py-1 text-left">Stop Time</th>
+                      <th className="border px-2 py-1 text-left">Start Time</th>
+                      <th className="border px-2 py-1 text-left">Stop Time</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {(formData.confined_rescue_team?.rows ?? []).map((row: any, rIdx: number) => (
+                      <tr key={`team-${rIdx}`}>
+                        <td className="border px-2 py-1">
+                          <input
+                            className="w-full border rounded px-2 py-1"
+                            value={row.name}
+                            onChange={(e) => setAttendantName('confined_rescue_team', rIdx, e.target.value)}
+                          />
+                        </td>
+                        {row.times.map((t: any, pIdx: number) => (
+                          <td key={`team-${rIdx}-${pIdx}-start`} className="border px-2 py-1">
+                            <input
+                              type="time"
+                              className="w-full border rounded px-2 py-1"
+                              value={t.start}
+                              onChange={(e) =>
+                                setAttendantTime('confined_rescue_team', rIdx, pIdx, 'start', e.target.value)
+                              }
+                            />
+                          </td>
+                        ))}
+                        {row.times.map((t: any, pIdx: number) => (
+                          <td key={`team-${rIdx}-${pIdx}-stop`} className="border px-2 py-1">
+                            <input
+                              type="time"
+                              className="w-full border rounded px-2 py-1"
+                              value={t.stop}
+                              onChange={(e) =>
+                                setAttendantTime('confined_rescue_team', rIdx, pIdx, 'stop', e.target.value)
+                              }
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Air Monitoring */}
-      <div className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}>
-        <div className="bg-kmGray px-3 py-2 font-semibold flex items-center justify-between">
-          <span>Air Monitoring (Perform continuous air monitoring, record hourly)</span>
-          <div className="flex items-center gap-3">
-            <label className="text-sm flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={vocNA}
-                onChange={() => setVocNA((v) => !v)}
+        {/* Air Monitoring */}
+        <div className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}>
+          <div className="bg-kmGray px-3 py-2 font-semibold flex items-center justify-between">
+            <span>Air Monitoring (Perform continuous air monitoring, record hourly)</span>
+            <div className="flex items-center gap-3">
+              <label className="text-sm flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={vocNA}
+                  onChange={() => setVocNA((v) => !v)}
+                  disabled={!monitoringEnabled}
+                />
+                VOC N/A
+              </label>
+
+              <button
+                type="button"
+                className="rounded bg-blue-600 text-white px-3 py-1 text-sm"
+                onClick={addTimeColumn}
                 disabled={!monitoringEnabled}
-              />
-              VOC N/A
-            </label>
-
-            <button
-              type="button"
-              className="rounded bg-blue-600 text-white px-3 py-1 text-sm"
-              onClick={addTimeColumn}
-              disabled={!monitoringEnabled}
-            >
-              Add Time Column
-            </button>
+              >
+                Add Time Column
+              </button>
+            </div>
           </div>
-        </div>
 
-        <div className="p-3 overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr>
-                <th className="border px-2 py-1 text-left" colSpan={2}>Initials of tester</th>
-                <th className="border px-2 py-1 text-left">
-                  <input
-                    className="w-24 border rounded px-1 py-0.5"
-                    value={formData.air_monitoring_initials?.initial ?? ''}
-                    onChange={(e) => setInitialsForColumn('initial', e.target.value)}
-                    disabled={!monitoringEnabled}
-                    placeholder="Initials"
-                  />
-                </th>
-                {Array.from({ length: timeColCount }).map((_, idx) => (
-                  <th key={`h-top-${idx}`} className="border px-2 py-1 text-left">
+          <div className="p-3 overflow-x-auto">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr>
+                  <th className="border px-2 py-1 text-left" colSpan={2}>Initials of tester</th>
+                  <th className="border px-2 py-1 text-left">
                     <input
                       className="w-24 border rounded px-1 py-0.5"
-                      value={formData.air_monitoring_initials?.[`t${idx + 1}`] ?? ''}
-                      onChange={(e) => setInitialsForColumn(`t${idx + 1}` as any, e.target.value)}
+                      value={formData.air_monitoring_initials?.initial ?? ''}
+                      onChange={(e) => setInitialsForColumn('initial', e.target.value)}
                       disabled={!monitoringEnabled}
                       placeholder="Initials"
                     />
                   </th>
-                ))}
-              </tr>
-
-              <tr>
-                <th className="border px-2 py-1 text-left">Gas</th>
-                <th className="border px-2 py-1 text-left">Safe Range</th>
-                <th className="border px-2 py-1 text-left">Initial Reading</th>
-                {Array.from({ length: timeColCount }).map((_, idx) => (
-                  <th key={`h-${idx}`} className="border px-2 py-1 text-left">
-                    <div className="flex items-center gap-2">
-                      <span>Time:</span>
+                  {Array.from({ length: timeColCount }).map((_, idx) => (
+                    <th key={`h-top-${idx}`} className="border px-2 py-1 text-left">
                       <input
-                        type="time"
-                        className="w-28 border rounded px-1 py-0.5"
-                        value={timeHeaders[idx] ?? ''}
-                        onChange={(e) => setHeaderLabel(idx, e.target.value)}
+                        className="w-24 border rounded px-1 py-0.5"
+                        value={formData.air_monitoring_initials?.[`t${idx + 1}`] ?? ''}
+                        onChange={(e) => setInitialsForColumn(`t${idx + 1}` as any, e.target.value)}
                         disabled={!monitoringEnabled}
+                        placeholder="Initials"
                       />
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {GAS_ROWS.map((gas) => {
-                const rowDisabled = gas === 'VOC' && vocNA;
-                return (
-                  <tr key={gas} className={rowDisabled ? 'bg-gray-100' : ''}>
-                    <td className="border px-2 py-1 font-medium">{gas}</td>
-                    <td className="border px-2 py-1 text-gray-700">{SAFE_RANGE[gas] ?? '—'}</td>
-                    <td className="border px-1 py-1">
-                      <input
-                        className="w-full border rounded px-1 py-0.5"
-                        value={formData.air_monitoring?.[gas]?.['Initial Reading'] ?? ''}
-                        onChange={(e) => setAirCell(gas, 'Initial Reading', e.target.value)}
-                        disabled={!monitoringEnabled || rowDisabled}
-                      />
-                    </td>
-                    {Array.from({ length: timeColCount }).map((_, idx) => {
-                      const key = `t${idx + 1}`;
-                      return (
-                        <td key={key} className="border px-1 py-1">
-                          <input
-                            className="w-full border rounded px-1 py-0.5"
-                            value={formData.air_monitoring?.[gas]?.[key] ?? ''}
-                            onChange={(e) => setAirCell(gas, key, e.target.value)}
-                            disabled={!monitoringEnabled || rowDisabled}
-                          />
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                    </th>
+                  ))}
+                </tr>
 
-      {/* Instrument Info */}
-      <div className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}>
-        <div className="bg-kmGray px-3 py-2 font-semibold">Instrument Info</div>
-        <div className="p-3 grid md:grid-cols-3 gap-4">
-          <div className="md:col-span-3 grid md:grid-cols-3 gap-4">
-            <div>
-              <label className="font-medium">Make</label>
-              <input
-                className="mt-1 w-full border rounded px-2 py-1"
-                value={formData.instrument_info.make ?? ''}
-                onChange={(e) => setNestedText('instrument_info', 'make', e.target.value)}
-                disabled={!monitoringEnabled}
-              />
-            </div>
-            <div>
-              <label className="font-medium">Model</label>
-              <input
-                className="mt-1 w-full border rounded px-2 py-1"
-                value={formData.instrument_info.model ?? ''}
-                onChange={(e) => setNestedText('instrument_info', 'model', e.target.value)}
-                disabled={!monitoringEnabled}
-              />
-            </div>
-            <div>
-              <label className="font-medium">Serial</label>
-              <input
-                className="mt-1 w-full border rounded px-2 py-1"
-                value={formData.instrument_info.serial ?? ''}
-                onChange={(e) => setNestedText('instrument_info', 'serial', e.target.value)}
-                disabled={!monitoringEnabled}
-              />
-            </div>
-          </div>
-
-          <div className="md:col-span-3 grid md:grid-cols-2 gap-4">
-            <div className="flex items-center gap-6">
-              <span className="font-medium">Bump Tested Before Use:</span>
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={formData.instrument_info.bump_tested === true}
-                  onChange={() => setNestedText('instrument_info', 'bump_tested', true)}
-                  disabled={!monitoringEnabled}
-                />
-                Yes
-              </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={formData.instrument_info.bump_tested === false}
-                  onChange={() => setNestedText('instrument_info', 'bump_tested', false)}
-                  disabled={!monitoringEnabled}
-                />
-                No
-              </label>
-            </div>
-
-            <div className="flex items-center gap-6">
-              <span className="font-medium">Calibration Current:</span>
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={formData.instrument_info.calibration_current === true}
-                  onChange={() => setNestedText('instrument_info', 'calibration_current', true)}
-                  disabled={!monitoringEnabled}
-                />
-                Yes
-              </label>
-              <label className="flex items-center gap-1">
-                <input
-                  type="checkbox"
-                  checked={formData.instrument_info.calibration_current === false}
-                  onChange={() => setNestedText('instrument_info', 'calibration_current', false)}
-                  disabled={!monitoringEnabled}
-                />
-                No
-              </label>
-            </div>
+                <tr>
+                  <th className="border px-2 py-1 text-left">Gas</th>
+                  <th className="border px-2 py-1 text-left">Safe Range</th>
+                  <th className="border px-2 py-1 text-left">Initial Reading</th>
+                  {Array.from({ length: timeColCount }).map((_, idx) => (
+                    <th key={`h-${idx}`} className="border px-2 py-1 text-left">
+                      <div className="flex items-center gap-2">
+                        <span>Time:</span>
+                        <input
+                          type="time"
+                          className="w-28 border rounded px-1 py-0.5"
+                          value={timeHeaders[idx] ?? ''}
+                          onChange={(e) => setHeaderLabel(idx, e.target.value)}
+                          disabled={!monitoringEnabled}
+                        />
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {GAS_ROWS.map((gas) => {
+                  const rowDisabled = gas === 'VOC' && vocNA;
+                  return (
+                    <tr key={gas} className={rowDisabled ? 'bg-gray-100' : ''}>
+                      <td className="border px-2 py-1 font-medium">{gas}</td>
+                      <td className="border px-2 py-1 text-gray-700">{SAFE_RANGE[gas] ?? '—'}</td>
+                      <td className="border px-1 py-1">
+                        <input
+                          className="w-full border rounded px-1 py-0.5"
+                          value={formData.air_monitoring?.[gas]?.['Initial Reading'] ?? ''}
+                          onChange={(e) => setAirCell(gas, 'Initial Reading', e.target.value)}
+                          disabled={!monitoringEnabled || rowDisabled}
+                        />
+                      </td>
+                      {Array.from({ length: timeColCount }).map((_, idx) => {
+                        const key = `t${idx + 1}`;
+                        return (
+                          <td key={key} className="border px-1 py-1">
+                            <input
+                              className="w-full border rounded px-1 py-0.5"
+                              value={formData.air_monitoring?.[gas]?.[key] ?? ''}
+                              onChange={(e) => setAirCell(gas, key, e.target.value)}
+                              disabled={!monitoringEnabled || rowDisabled}
+                            />
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
-      </div>
 
-      {/* Signatures */}
-      <div className="border rounded">
-        <div className="bg-kmGray px-3 py-2 font-semibold">Signatures</div>
-        <div className="p-3 grid md:grid-cols-2 gap-4">
-          <div>
-            <label className="font-medium">Permit Issuer</label>
-            <input
-              name="issuer"
-              className="mt-1 w-full border rounded px-2 py-1"
-              value={formData.signatures.issuer}
-              onChange={(e) =>
-                setFormData((prev) => ({
-                  ...prev,
-                  signatures: { ...(prev.signatures ?? {}), issuer: e.target.value },
-                }))
-              }
-            />
-          </div>
-          <div>
-            <label className="font-medium">Permit Receiver</label>
-            <input
-              name="receiver"
-              className="mt-1 w-full border rounded px-2 py-1"
-              value={formData.signatures.receiver}
-              onChange={(e) =>
-                setFormData((prev) => ({
-                  ...prev,
-                  signatures: { ...(prev.signatures ?? {}), receiver: e.target.value },
-                }))
-              }
-            />
-          </div>
+        {/* Instrument Info */}
+        <div className={['border rounded', monitoringEnabled ? '' : 'opacity-60 pointer-events-none'].join(' ')}>
+          <div className="bg-kmGray px-3 py-2 font-semibold">Instrument Info</div>
+          <div className="p-3 grid md:grid-cols-3 gap-4">
+            <div className="md:col-span-3 grid md:grid-cols-3 gap-4">
+              <div>
+                <label className="font-medium">Make</label>
+                <input
+                  className="mt-1 w-full border rounded px-2 py-1"
+                  value={formData.instrument_info.make ?? ''}
+                  onChange={(e) => setNestedText('instrument_info', 'make', e.target.value)}
+                  disabled={!monitoringEnabled}
+                />
+              </div>
+              <div>
+                <label className="font-medium">Model</label>
+                <input
+                  className="mt-1 w-full border rounded px-2 py-1"
+                  value={formData.instrument_info.model ?? ''}
+                  onChange={(e) => setNestedText('instrument_info', 'model', e.target.value)}
+                  disabled={!monitoringEnabled}
+                />
+              </div>
+              <div>
+                <label className="font-medium">Serial</label>
+                <input
+                  className="mt-1 w-full border rounded px-2 py-1"
+                  value={formData.instrument_info.serial ?? ''}
+                  onChange={(e) => setNestedText('instrument_info', 'serial', e.target.value)}
+                  disabled={!monitoringEnabled}
+                />
+              </div>
+            </div>
 
-          {isPRCS && (
-            <div className="md:col-span-2">
-              <label className="font-medium">Confined Space Authorized Entry Supervisor</label>
+            <div className="md:col-span-3 grid md:grid-cols-2 gap-4">
+              <div className="flex items-center gap-6">
+                <span className="font-medium">Bump Tested Before Use:</span>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={formData.instrument_info.bump_tested === true}
+                    onChange={() => setNestedText('instrument_info', 'bump_tested', true)}
+                    disabled={!monitoringEnabled}
+                  />
+                  Yes
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={formData.instrument_info.bump_tested === false}
+                    onChange={() => setNestedText('instrument_info', 'bump_tested', false)}
+                    disabled={!monitoringEnabled}
+                  />
+                  No
+                </label>
+              </div>
+
+              <div className="flex items-center gap-6">
+                <span className="font-medium">Calibration Current:</span>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={formData.instrument_info.calibration_current === true}
+                    onChange={() => setNestedText('instrument_info', 'calibration_current', true)}
+                    disabled={!monitoringEnabled}
+                  />
+                  Yes
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={formData.instrument_info.calibration_current === false}
+                    onChange={() => setNestedText('instrument_info', 'calibration_current', false)}
+                    disabled={!monitoringEnabled}
+                  />
+                  No
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Signatures */}
+        <div className="border rounded">
+          <div className="bg-kmGray px-3 py-2 font-semibold">Signatures</div>
+          <div className="p-3 grid md:grid-cols-2 gap-4">
+            <div>
+              <label className="font-medium">Permit Issuer</label>
               <input
+                name="issuer"
                 className="mt-1 w-full border rounded px-2 py-1"
-                value={formData.signatures.entry_supervisor ?? ''}
+                value={formData.signatures.issuer}
                 onChange={(e) =>
                   setFormData((prev) => ({
                     ...prev,
-                    signatures: { ...(prev.signatures ?? {}), entry_supervisor: e.target.value },
+                    signatures: { ...(prev.signatures ?? {}), issuer: e.target.value },
                   }))
                 }
               />
             </div>
-          )}
+            <div>
+              <label className="font-medium">Permit Receiver</label>
+              <input
+                name="receiver"
+                className="mt-1 w-full border rounded px-2 py-1"
+                value={formData.signatures.receiver}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    signatures: { ...(prev.signatures ?? {}), receiver: e.target.value },
+                  }))
+                }
+              />
+            </div>
+
+            {isPRCS && (
+              <div className="md:col-span-2">
+                <label className="font-medium">Confined Space Authorized Entry Supervisor</label>
+                <input
+                  className="mt-1 w-full border rounded px-2 py-1"
+                  value={formData.signatures.entry_supervisor ?? ''}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      signatures: { ...(prev.signatures ?? {}), entry_supervisor: e.target.value },
+                    }))
+                  }
+                />
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Actions */}
       <div className="flex gap-4">
-        <button
-          onClick={handleSubmit}
-          disabled={loading}
-          className="bg-kmGreen text-white px-4 py-2 rounded disabled:opacity-50"
-        >
-          {loading ? (mode === 'edit' ? 'Updating...' : 'Submitting...') : (mode === 'edit' ? 'Update Permit' : 'Submit')}
-        </button>
+        {!isClosed && (
+          <button
+            onClick={handleSubmit}
+            disabled={loading}
+            className="bg-kmGreen text-white px-4 py-2 rounded disabled:opacity-50"
+          >
+            {loading ? (mode === 'edit' ? 'Updating...' : 'Submitting...') : (mode === 'edit' ? 'Update Permit' : 'Submit')}
+          </button>
+        )}
         <button onClick={() => window.history.back()} className="bg-kmRed text-white px-4 py-2 rounded">
           Cancel
         </button>
@@ -2061,3 +2136,4 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     </div>
   );
 }
+``
