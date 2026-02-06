@@ -307,7 +307,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     time_issued: defaultTime,
     date_expires: '',
     time_expires: '',
-    status: '' as string, // NEW: track status
+    status: 'open' as string, // CHANGE: default to valid DB value
     permit_types: {} as JsonMap,
     ppe_requirements: {} as JsonMap,
     additional_ppe: {} as JsonMap,
@@ -383,7 +383,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
           ...initialData,
           air_monitoring_initials: initialData.air_monitoring_initials ?? {},
           air_monitoring_headers: initialData.air_monitoring_headers ?? {},
-          status: initialData.status ?? '',
+          status: initialData.status ?? prev.status, // preserve existing status
         }));
         if (typeof initialData?.permit_number === 'number') setNextPermitNumber(initialData.permit_number);
         return;
@@ -407,7 +407,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         ...data,
         air_monitoring_initials: data.air_monitoring_initials ?? {},
         air_monitoring_headers: data.air_monitoring_headers ?? {},
-        status: data.status ?? '',
+        status: data.status ?? prev.status,
       }));
       if (typeof data?.permit_number === 'number') setNextPermitNumber(data.permit_number);
     })();
@@ -796,6 +796,11 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
           updated_by: userId,
           permit_number: nextPermitNumber ?? (formData as any)?.permit_number ?? null,
         };
+
+        // CHANGE: guard - do not send blank status to DB (prevents clobbering with '')
+        if (!payload.status || (typeof payload.status === 'string' && payload.status.trim() === '')) {
+          delete payload.status;
+        }
 
         const { error } = await supabase
           .from('safe_work_permits')
