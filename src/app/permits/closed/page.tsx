@@ -12,11 +12,10 @@ type PermitRow = {
   contractor: string | null;
   date_issued: string | null;
   status?: string | null;
+  permit_types?: Record<string, any> | null;
 };
 
 const PAGE_SIZE = 25;
-// Adjust to whatever “closed” statuses you use
-const CLOSED_VALUES = ['closed', 'Closed', 'complete', 'completed', 'Complete', 'Completed'];
 
 export default function ClosedPermitsPage() {
   const [items, setItems] = useState<PermitRow[]>([]);
@@ -31,6 +30,9 @@ export default function ClosedPermitsPage() {
   const [contractor, setContractor] = useState<string>('');
   const [dateIssued, setDateIssued] = useState<string>(''); // yyyy-mm-dd
 
+  // NEW: Permit Type filter (client-side derived)
+  const [permitTypeFilter, setPermitTypeFilter] = useState<string>(''); // '', 'Hot Work', 'Confined Space', 'General Work', 'Other'
+
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   const fmtDate = (iso?: string | null) => {
@@ -40,20 +42,39 @@ export default function ClosedPermitsPage() {
     return d.toISOString().slice(0, 10);
   };
 
-  // Fetch API
+  // Derive a human Permit Type from JSONB booleans
+  const derivePermitType = (pt?: Record<string, any> | null): 'Hot Work' | 'Confined Space' | 'General Work' | 'Other' => {
+    if (!pt) return 'Other';
+    if (pt.PRCS || pt.NPRCS) return 'Confined Space';
+    if (pt['Burning/Brazing/Welding'] || pt['Grinding/Cutting'] || pt['Use of torch']) return 'Hot Work';
+
+    const GENERAL_WORK_REPLACED = [
+      'Install equipment/materials',
+      'Inspect/troubleshoot/test',
+      'Run conduit/wire/pipe/tubing',
+      'Use of hand tools',
+      'Use of electric/power tools',
+      'Working at elevations/overhead',
+      'Hand paint/wire brush/scrape',
+      'Hydro/pneumatic pressure test',
+      'Crane/lifting equipment',
+      'Use of heavy equipment',
+    ];
+    if (GENERAL_WORK_REPLACED.some((k) => !!pt[k])) return 'General Work';
+    return 'Other';
+  };
+
   const fetchPage = async (targetPage: number) => {
     setLoading(true);
 
-    // base select with count
     let query = supabase
       .from('safe_work_permits')
-      .select('id, permit_number, facility, location, contractor, date_issued, status', {
+      .select('id, permit_number, facility, location, contractor, date_issued, status, permit_types', {
         count: 'exact',
       })
-      .in('status', CLOSED_VALUES)
+      .eq('status', 'closed') // canonical
       .order('date_issued', { ascending: false });
 
-    // Filters
     const permitNumberInt = parseInt(permitNo, 10);
     if (!Number.isNaN(permitNumberInt)) {
       query = query.eq('permit_number', permitNumberInt);
@@ -68,18 +89,16 @@ export default function ClosedPermitsPage() {
       query = query.ilike('contractor', `%${contractor.trim()}%`);
     }
     if (dateIssued) {
-      // capture whole day: [date, date + 1 day)
       const start = new Date(dateIssued);
       if (!isNaN(start.getTime())) {
         const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
         query = query.gte('date_issued', start.toISOString()).lt('date_issued', end.toISOString());
       } else {
-        // fallback exact: if storage is just YYYY-MM-DD text
         query = query.eq('date_issued', dateIssued);
       }
     }
 
-    // Pagination
+    // Pagination (server-side)
     const from = (targetPage - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
     query = query.range(from, to);
@@ -99,7 +118,6 @@ export default function ClosedPermitsPage() {
     setLoading(false);
   };
 
-  // Initial load
   useEffect(() => {
     (async () => {
       const { data: auth } = await supabase.auth.getUser();
@@ -136,6 +154,7 @@ export default function ClosedPermitsPage() {
     setLocation('');
     setContractor('');
     setDateIssued('');
+    setPermitTypeFilter(''); // reset permit type filter
     setPage(1);
     fetchPage(1);
   };
@@ -177,27 +196,33 @@ export default function ClosedPermitsPage() {
     w.document.write(html);
     w.document.close();
     w.focus();
-    // optional: w.print();
   };
+
+  // Client-side permit type derivation and filter (applied to current page items)
+  const pageItemsFiltered = useMemo(() => {
+    if (!permitTypeFilter) return items;
+    return items.filter((it) => derivePermitType(it.permit_types) === permitTypeFilter);
+  }, [items, permitTypeFilter]);
 
   const body = useMemo(() => {
     if (loading) {
       return (
         <tr>
-          <td className="border p-2 italic" colSpan={6}>Loading…</td>
+          <td className="border p-2 italic" colSpan={7}>Loading…</td>
         </tr>
       );
     }
-    if (items.length === 0) {
+    if (pageItemsFiltered.length === 0) {
       return (
         <tr>
-          <td className="border p-2 italic" colSpan={6}>No closed permits found.</td>
+          <td className="border p-2 italic" colSpan={7}>No closed permits found.</td>
         </tr>
       );
     }
-    return items.map((it) => (
+    return pageItemsFiltered.map((it) => (
       <tr key={it.id}>
         <td className="border p-2">{it.permit_number ?? '-'}</td>
+        <td className="border p-2">{derivePermitType(it.permit_types)}</td>
         <td className="border p-2">{it.facility ?? ''}</td>
         <td className="border p-2">{it.location ?? ''}</td>
         <td className="border p-2">{it.contractor ?? ''}</td>
@@ -213,7 +238,7 @@ export default function ClosedPermitsPage() {
         </td>
       </tr>
     ));
-  }, [items, loading]);
+  }, [items, pageItemsFiltered, loading]);
 
   return (
     <div>
@@ -221,7 +246,7 @@ export default function ClosedPermitsPage() {
 
       {/* Filters */}
       <div className="border rounded p-3 mb-3">
-        <div className="grid md:grid-cols-5 gap-3">
+        <div className="grid md:grid-cols-6 gap-3">
           <div>
             <label className="block text-sm font-medium">Permit Number</label>
             <input
@@ -268,6 +293,22 @@ export default function ClosedPermitsPage() {
               onChange={(e) => setDateIssued(e.target.value)}
             />
           </div>
+
+          {/* NEW: Permit Type (client-side filter) */}
+          <div>
+            <label className="block text-sm font-medium">Permit Type</label>
+            <select
+              className="mt-1 w-full border rounded px-2 py-1"
+              value={permitTypeFilter}
+              onChange={(e) => setPermitTypeFilter(e.target.value)}
+            >
+              <option value="">All</option>
+              <option value="Hot Work">Hot Work</option>
+              <option value="Confined Space">Confined Space</option>
+              <option value="General Work">General Work</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
         </div>
 
         <div className="mt-3 flex gap-2">
@@ -286,6 +327,13 @@ export default function ClosedPermitsPage() {
             Reset
           </button>
         </div>
+
+        {/* Small note about client-side permit type filter */}
+        {permitTypeFilter && (
+          <div className="text-xs text-gray-600 mt-2">
+            * Permit Type filter is applied on the current page after server filters.
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -294,6 +342,7 @@ export default function ClosedPermitsPage() {
           <thead>
             <tr className="bg-kmGray">
               <th className="border p-2 text-left">Permit Number</th>
+              <th className="border p-2 text-left">Permit Type</th>
               <th className="border p-2 text-left">Facility</th>
               <th className="border p-2 text-left">Location</th>
               <th className="border p-2 text-left">Contractor</th>
@@ -328,3 +377,4 @@ export default function ClosedPermitsPage() {
     </div>
   );
 }
+``
