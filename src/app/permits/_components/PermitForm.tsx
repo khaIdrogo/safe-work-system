@@ -570,6 +570,14 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.energy_control]);
 
+  /* ---------- Helper: ensure AirMonitoringRow shape (patch) ---------- */
+  const ensureAirRow = (row?: Partial<AirMonitoringRow>): AirMonitoringRow => {
+    return {
+      'Initial Reading': '',
+      ...(row ?? {}),
+    } as AirMonitoringRow;
+  };
+
   /* ---------- Inputs & helpers ---------- */
   const handleText = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -633,13 +641,18 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
   };
 
   const setAirCell = (gas: string, colKey: string, value: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      air_monitoring: {
-        ...prev.air_monitoring,
-        [gas]: { ...(prev.air_monitoring?.[gas] ?? {}), [colKey]: value },
-      },
-    }));
+    setFormData((prev) => {
+      const currentRow = ensureAirRow(prev.air_monitoring?.[gas] as Partial<AirMonitoringRow> | undefined);
+      const updatedRow: AirMonitoringRow = { ...currentRow, [colKey]: value } as AirMonitoringRow;
+
+      return {
+        ...prev,
+        air_monitoring: {
+          ...prev.air_monitoring,
+          [gas]: updatedRow,
+        },
+      };
+    });
   };
 
   const setHeaderLabel = (idx: number, value: string) => {
@@ -671,7 +684,8 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         const nextHeaders = { ...(prev.air_monitoring_headers ?? {}) } as AirMonitoringHeaders;
         const newKey = `t${newCount}` as const;
         GAS_ROWS.forEach((gas) => {
-          nextMonitoring[gas] = { ...(nextMonitoring[gas] ?? {}), [newKey]: '' } as AirMonitoringRow;
+          const baseRow = ensureAirRow(nextMonitoring[gas] as Partial<AirMonitoringRow> | undefined);
+          nextMonitoring[gas] = { ...baseRow, [newKey]: '' };
         });
         nextInitials[newKey] = '';
         nextHeaders[newKey] = '';
