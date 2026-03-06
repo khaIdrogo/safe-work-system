@@ -837,7 +837,12 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
       const rows = ((ent.rows as any[]) ?? []).map((r: any, i: number) =>
         i === rowIdx ? { ...r, name: value } : r
       );
-      return { ...prev, confined_entrants: { ...ent, rows } };
+      const timePairs: number =
+        typeof ent.time_pairs === 'number'
+          ? ent.time_pairs
+          : prev.confined_entrants?.time_pairs ?? rows[0]?.times?.length ?? 3;
+
+      return { ...prev, confined_entrants: { time_pairs: timePairs, rows } };
     });
   };
 
@@ -856,7 +861,12 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         );
         return { ...r, times };
       });
-      return { ...prev, confined_entrants: { ...ent, rows } };
+      const timePairs: number =
+        typeof ent.time_pairs === 'number'
+          ? ent.time_pairs
+          : prev.confined_entrants?.time_pairs ?? rows[0]?.times?.length ?? 3;
+
+      return { ...prev, confined_entrants: { time_pairs: timePairs, rows } };
     });
   };
 
@@ -1758,7 +1768,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                             />
                             30 min
                           </label>
-                          <label className="flex items-center gap-1">
+                        <label className="flex items-center gap-1">
                             <input
                               type="checkbox"
                               checked={formData.special_conditions.fire_watch_after === '>30'}
