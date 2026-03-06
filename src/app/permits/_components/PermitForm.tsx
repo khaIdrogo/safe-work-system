@@ -19,6 +19,90 @@ type PermitFormProps = {
   initialData?: any;
 };
 
+/* ---------------- Stronger TS types (rec 9) ---------------- */
+type AirMonitoringRow = { 'Initial Reading': string } & Record<`t${number}`, string>;
+type AirMonitoringTable = Record<string, AirMonitoringRow>;
+type AirMonitoringInitials = { initial?: string } & Record<`t${number}`, string>;
+type AirMonitoringHeaders = Record<`t${number}`, string>;
+
+type InstrumentInfo = {
+  make?: string;
+  model?: string;
+  serial?: string;
+  bump_tested?: boolean;
+  calibration_current?: boolean;
+};
+
+type EnergyControl = {
+  na?: boolean;
+  zero_energy?: boolean;
+  personal_locks?: boolean;
+  lock_box_number?: string;
+};
+
+type YesNa = { yes?: boolean; na?: boolean };
+
+type HazardReduction = Record<string, YesNa> & {
+  other_text?: string;
+  radio_channel?: string;
+};
+
+type EquipmentCondition = Record<string, YesNa> & {
+  other_text?: string;
+};
+
+type SpecialConditions = Record<string, YesNa> & {
+  comm_type?: string;
+  fire_watch_after?: '30' | '>30';
+  fire_watch_length?: string;
+  other_text?: string;
+};
+
+type AdditionalPPEState = Record<string, Record<string, boolean | string>>;
+
+type ConfinedHazardAssessment = Record<string, boolean> & { other_text?: string };
+
+type TimePairInOut = { in: string; out: string };
+type TimePairStartStop = { start: string; stop: string };
+
+type ConfinedEntrantRow = { name: string; times: TimePairInOut[] };
+type ConfinedAttendantRow = { name: string; times: TimePairStartStop[] };
+
+type ConfinedEntrants = { time_pairs: number; rows: ConfinedEntrantRow[] };
+type ConfinedAttendants = { rows: ConfinedAttendantRow[] };
+
+type Signatures = { issuer?: string; receiver?: string; entry_supervisor?: string };
+
+type PermitFormState = {
+  facility: string;
+  location: string;
+  contractor: string;
+  description_of_work: string;
+  date_issued: string;
+  time_issued: string;
+  date_expires: string;
+  time_expires: string;
+  status: 'open' | 'closed' | string;
+  permit_types: JsonMap;
+  ppe_requirements: JsonMap;
+  additional_ppe: AdditionalPPEState;
+  hazard_reduction: HazardReduction;
+  equipment_condition: EquipmentCondition;
+  energy_control: EnergyControl;
+  special_conditions: SpecialConditions;
+  additional_documents: JsonMap;
+  air_monitoring: AirMonitoringTable & { meta?: { voc_na?: boolean } };
+  air_monitoring_initials: AirMonitoringInitials;
+  air_monitoring_headers: AirMonitoringHeaders;
+  instrument_info: InstrumentInfo;
+  confined_hazard_assessment: ConfinedHazardAssessment;
+  confined_rescue_plan: JsonMap;
+  confined_entrants: ConfinedEntrants;
+  confined_attendants: ConfinedAttendants;
+  confined_rescue_team: ConfinedAttendants;
+  signatures: Signatures;
+};
+
 /* ---------------- Air Monitoring ---------------- */
 const INITIAL_TIME_COLS = 5;
 const GAS_ROWS = AIR_MONITORING_GASES.map(({ gas }) => gas);
@@ -98,9 +182,12 @@ function normalizeHeadItem(it: string): string {
 }
 
 function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
-  // HEAD/FACE/RESPIRATORY
-  const headOrig = additionalPpe.HAND_FACE_RESPIRATORY ?? [];
-  let headItems = headOrig.map(normalizeHeadItem).filter(Boolean) as string[];
+  // HEAD/FACE/RESPIRATORY (rec 2: support both keys safely)
+  const headOrig =
+    (additionalPpe as any).HAND_FACE_RESPIRATORY ??
+    (additionalPpe as any).HEAD_FACE_RESPIRATORY ??
+    [];
+  let headItems = (headOrig as string[]).map(normalizeHeadItem).filter(Boolean);
 
   // Remove duplicates for these extras
   const extraRespItems = [
@@ -286,9 +373,6 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
   const [vocNA, setVocNA] = useState<boolean>(true);
   const [energyNA, setEnergyNA] = useState<boolean>(true);
   const [timeColCount, setTimeColCount] = useState<number>(INITIAL_TIME_COLS);
-  const [timeHeaders, setTimeHeaders] = useState<string[]>(
-    Array.from({ length: INITIAL_TIME_COLS }, () => '')
-  );
 
   const defaultDate = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const defaultTime = useMemo(() => new Date().toTimeString().slice(0, 5), []);
@@ -298,7 +382,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     return dateStr === today ? new Date().toTimeString().slice(0, 5) : '00:00';
   };
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<PermitFormState>({
     facility: '',
     location: '',
     contractor: '',
@@ -307,20 +391,20 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     time_issued: defaultTime,
     date_expires: '',
     time_expires: '',
-    status: 'open' as string, // CHANGE: default to valid DB value
+    status: 'open',
     permit_types: {} as JsonMap,
     ppe_requirements: {} as JsonMap,
-    additional_ppe: {} as JsonMap,
-    hazard_reduction: {} as JsonMap,
-    equipment_condition: {} as JsonMap,
-    energy_control: {} as JsonMap,
-    special_conditions: {} as JsonMap,
+    additional_ppe: {} as AdditionalPPEState,
+    hazard_reduction: {} as HazardReduction,
+    equipment_condition: {} as EquipmentCondition,
+    energy_control: {} as EnergyControl,
+    special_conditions: {} as SpecialConditions,
     additional_documents: {} as JsonMap,
-    air_monitoring: {} as JsonMap,
-    air_monitoring_initials: {} as JsonMap,
-    air_monitoring_headers: {} as JsonMap,
-    instrument_info: {} as JsonMap,
-    confined_hazard_assessment: {} as JsonMap,
+    air_monitoring: {} as AirMonitoringTable,
+    air_monitoring_initials: {} as AirMonitoringInitials,
+    air_monitoring_headers: {} as AirMonitoringHeaders,
+    instrument_info: {} as InstrumentInfo,
+    confined_hazard_assessment: {} as ConfinedHazardAssessment,
     confined_rescue_plan: {} as JsonMap,
     confined_entrants: {
       time_pairs: 3,
@@ -328,20 +412,20 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         name: '',
         times: Array.from({ length: 3 }, () => ({ in: '', out: '' })),
       })),
-    } as JsonMap,
+    },
     confined_attendants: {
       rows: Array.from({ length: 2 }, () => ({
         name: '',
         times: Array.from({ length: 2 }, () => ({ start: '', stop: '' })),
       })),
-    } as JsonMap,
+    },
     confined_rescue_team: {
       rows: Array.from({ length: 4 }, () => ({
         name: '',
         times: Array.from({ length: 2 }, () => ({ start: '', stop: '' })),
       })),
-    } as JsonMap,
-    signatures: { issuer: '', receiver: '', entry_supervisor: '' } as JsonMap,
+    },
+    signatures: { issuer: '', receiver: '', entry_supervisor: '' },
   });
 
   const isClosed = (formData.status ?? initialData?.status) === 'closed';
@@ -408,7 +492,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         air_monitoring_initials: data.air_monitoring_initials ?? {},
         air_monitoring_headers: data.air_monitoring_headers ?? {},
         status: data.status ?? prev.status,
-      }));
+      }) as PermitFormState);
       if (typeof data?.permit_number === 'number') setNextPermitNumber(data.permit_number);
     })();
   }, [mode, recordId, initialData]);
@@ -416,7 +500,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
   /* ---------- Init Air Monitoring defaults (only if empty) ---------- */
   useEffect(() => {
     setFormData((prev) => {
-      if (Object.keys(prev.air_monitoring ?? {}).length > 0) return prev;
+      if (prev.air_monitoring && Object.keys(prev.air_monitoring).length > 0) return prev;
       const table: JsonMap = {};
       GAS_ROWS.forEach((gas) => {
         table[gas] = { 'Initial Reading': '' };
@@ -431,13 +515,60 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
 
       return {
         ...prev,
-        air_monitoring: table,
-        air_monitoring_initials: initials,
-        air_monitoring_headers: headers,
+        air_monitoring: table as AirMonitoringTable,
+        air_monitoring_initials: initials as AirMonitoringInitials,
+        air_monitoring_headers: headers as AirMonitoringHeaders,
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ---------- Sync Air Monitoring column count & headers on hydration (rec 1 & 5) ---------- */
+  useEffect(() => {
+    const a = formData.air_monitoring as JsonMap | undefined;
+    const h = formData.air_monitoring_headers as JsonMap | undefined;
+
+    let colKeys = h ? Object.keys(h).filter((k) => /^t\d+$/.test(k)) : [];
+
+    if (colKeys.length === 0 && a) {
+      const firstGas = Object.keys(a)[0];
+      if (firstGas && a[firstGas]) {
+        colKeys = Object.keys(a[firstGas]).filter((k) => /^t\d+$/.test(k));
+      }
+    }
+
+    if (colKeys.length === 0) return;
+
+    colKeys.sort((x, y) => Number(x.slice(1)) - Number(y.slice(1)));
+
+    if (colKeys.length !== timeColCount) {
+      setTimeColCount(colKeys.length);
+    }
+
+    if (!h) {
+      setFormData((prev) => {
+        const next: JsonMap = { ...(prev.air_monitoring_headers ?? {}) };
+        colKeys.forEach((k) => {
+          if (typeof next[k] !== 'string') next[k] = '';
+        });
+        return { ...prev, air_monitoring_headers: next as AirMonitoringHeaders };
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.air_monitoring, formData.air_monitoring_headers]);
+
+  /* ---------- Persisted N/A toggles hydration (rec 3) ---------- */
+  useEffect(() => {
+    const saved = (formData.air_monitoring as JsonMap)?.meta?.voc_na;
+    if (typeof saved === 'boolean') setVocNA(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.air_monitoring]);
+
+  useEffect(() => {
+    const saved = (formData.energy_control as JsonMap)?.na;
+    if (typeof saved === 'boolean') setEnergyNA(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.energy_control]);
 
   /* ---------- Inputs & helpers ---------- */
   const handleText = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -464,7 +595,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     });
   };
 
-  const toggleSimple = (section: keyof typeof formData, key: string) => {
+  const toggleSimple = (section: keyof PermitFormState, key: string) => {
     setFormData((prev) => ({
       ...prev,
       [section]: {
@@ -474,7 +605,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     }));
   };
 
-  const toggleNested = (section: keyof typeof formData, category: string, key: string) => {
+  const toggleNested = (section: keyof PermitFormState, category: string, key: string) => {
     setFormData((prev) => {
       const sec = (prev[section] as JsonMap) ?? {};
       const cat = (sec[category] as JsonMap) ?? {};
@@ -491,7 +622,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     });
   };
 
-  const setNestedText = (section: keyof typeof formData, key: string, value: string | boolean) => {
+  const setNestedText = (section: keyof PermitFormState, key: string, value: string | boolean) => {
     setFormData((prev) => ({
       ...prev,
       [section]: {
@@ -512,17 +643,12 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
   };
 
   const setHeaderLabel = (idx: number, value: string) => {
-    setTimeHeaders((prev) => {
-      const copy = [...prev];
-      copy[idx] = value;
-      return copy;
-    });
     setFormData((prev) => ({
       ...prev,
       air_monitoring_headers: {
-        ...prev.air_monitoring_headers,
+        ...(prev.air_monitoring_headers ?? {}),
         [`t${idx + 1}`]: value,
-      },
+      } as AirMonitoringHeaders,
     }));
   };
 
@@ -539,14 +665,13 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
   const addTimeColumn = () => {
     setTimeColCount((prevCount) => {
       const newCount = prevCount + 1;
-      setTimeHeaders((prev) => [...prev, '']);
       setFormData((prev) => {
-        const nextMonitoring = { ...(prev.air_monitoring ?? {}) };
-        const nextInitials = { ...(prev.air_monitoring_initials ?? {}) };
-        const nextHeaders = { ...(prev.air_monitoring_headers ?? {}) };
-        const newKey = `t${newCount}`;
+        const nextMonitoring = { ...(prev.air_monitoring ?? {}) } as AirMonitoringTable;
+        const nextInitials = { ...(prev.air_monitoring_initials ?? {}) } as AirMonitoringInitials;
+        const nextHeaders = { ...(prev.air_monitoring_headers ?? {}) } as AirMonitoringHeaders;
+        const newKey = `t${newCount}` as const;
         GAS_ROWS.forEach((gas) => {
-          nextMonitoring[gas] = { ...(nextMonitoring[gas] ?? {}), [newKey]: '' };
+          nextMonitoring[gas] = { ...(nextMonitoring[gas] ?? {}), [newKey]: '' } as AirMonitoringRow;
         });
         nextInitials[newKey] = '';
         nextHeaders[newKey] = '';
@@ -751,10 +876,59 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     });
   };
 
+  /* ---------- Persisted toggles (rec 3) ---------- */
+  const toggleVocNA = () => {
+    setVocNA((prev) => {
+      const next = !prev;
+      setFormData((p) => {
+        const am = (p.air_monitoring as JsonMap) ?? {};
+        const meta = (am.meta as JsonMap) ?? {};
+        return {
+          ...p,
+          air_monitoring: {
+            ...am,
+            meta: { ...meta, voc_na: next },
+          } as AirMonitoringTable & { meta?: { voc_na?: boolean } },
+        };
+      });
+      return next;
+    });
+  };
+
+  const toggleEnergyNA = () => {
+    setEnergyNA((prev) => {
+      const next = !prev;
+      setFormData((p) => ({
+        ...p,
+        energy_control: {
+          ...(p.energy_control as EnergyControl),
+          na: next,
+        },
+      }));
+      return next;
+    });
+  };
+
+  /* ---------- Required-field validation (rec 4) ---------- */
+  const validateRequired = () => {
+    const missing: string[] = [];
+    if (!formData.facility?.trim()) missing.push('Facility');
+    if (!formData.location?.trim()) missing.push('Location');
+    if (!formData.contractor?.trim()) missing.push('Contractor');
+    if (!formData.description_of_work?.trim()) missing.push('Description of Work');
+    return missing;
+  };
+
   /* ---------- Submit: Update when editing, Insert when creating ---------- */
   const handleSubmit = async () => {
     try {
       if (!userId) return alert('Not signed in');
+
+      const missing = validateRequired();
+      if (missing.length) {
+        alert(`Please complete required fields: ${missing.join(', ')}`);
+        return;
+      }
 
       // Guard: For CREATE, block past times. For EDIT, allow (we also freeze date/time anyway).
       if (mode === 'create') {
@@ -785,7 +959,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
 
       if (mode === 'edit' && recordId) {
         // --- UPDATE EXISTING ---
-        // Freeze original Date/Time Issued on update (prevents reusing the same permit day after day)
+        // Freeze original Date/Time Issued on update
         const safeDateIssued = originalDateIssued ?? formData.date_issued;
         const safeTimeIssued = originalTimeIssued ?? formData.time_issued;
 
@@ -797,7 +971,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
           permit_number: nextPermitNumber ?? (formData as any)?.permit_number ?? null,
         };
 
-        // CHANGE: guard - do not send blank status to DB (prevents clobbering with '')
+        // guard - do not send blank status to DB
         if (!payload.status || (typeof payload.status === 'string' && payload.status.trim() === '')) {
           delete payload.status;
         }
@@ -1010,7 +1184,6 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                 name="date_expires"
                 type="date"
                 value={formData.date_expires}
-                onChange={handleText}
                 className="mt-1 w-full border rounded px-2 py-1"
                 readOnly
               />
@@ -1021,7 +1194,6 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                 name="time_expires"
                 type="time"
                 value={formData.time_expires}
-                onChange={handleText}
                 className="mt-1 w-full border rounded px-2 py-1"
                 readOnly
               />
@@ -1153,7 +1325,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                 </label>
               </div>
               <div className="space-y-2">
-                {transformConfinedSpace(PERMIT_TYPES?.CONFINED_SPACE ?? []).map((item) => {
+                {confinedList.map((item) => {
                   const checked = !!(formData.permit_types as JsonMap)[item];
                   return (
                     <label key={item} className="flex items-center gap-2">
@@ -1458,7 +1630,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
           <div className="bg-kmGray px-3 py-2 font-semibold flex items-center justify-between">
             <span>Energy Control</span>
             <label className="text-sm flex items-center gap-2 pr-2 pointer-events-auto">
-              <input type="checkbox" checked={energyNA} onChange={() => setEnergyNA((v) => !v)} />
+              <input type="checkbox" checked={energyNA} onChange={toggleEnergyNA} />
               N/A
             </label>
           </div>
@@ -1889,7 +2061,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                 <input
                   type="checkbox"
                   checked={vocNA}
-                  onChange={() => setVocNA((v) => !v)}
+                  onChange={toggleVocNA}
                   disabled={!monitoringEnabled}
                 />
                 VOC N/A
@@ -1944,7 +2116,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                         <input
                           type="time"
                           className="w-28 border rounded px-1 py-0.5"
-                          value={timeHeaders[idx] ?? ''}
+                          value={(formData.air_monitoring_headers?.[`t${idx + 1}` as const]) ?? ''}
                           onChange={(e) => setHeaderLabel(idx, e.target.value)}
                           disabled={!monitoringEnabled}
                         />
@@ -2024,11 +2196,13 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
             </div>
 
             <div className="md:col-span-3 grid md:grid-cols-2 gap-4">
+              {/* Radios (rec 8) */}
               <div className="flex items-center gap-6">
                 <span className="font-medium">Bump Tested Before Use:</span>
                 <label className="flex items-center gap-1">
                   <input
-                    type="checkbox"
+                    type="radio"
+                    name="bump_tested"
                     checked={formData.instrument_info.bump_tested === true}
                     onChange={() => setNestedText('instrument_info', 'bump_tested', true)}
                     disabled={!monitoringEnabled}
@@ -2037,7 +2211,8 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                 </label>
                 <label className="flex items-center gap-1">
                   <input
-                    type="checkbox"
+                    type="radio"
+                    name="bump_tested"
                     checked={formData.instrument_info.bump_tested === false}
                     onChange={() => setNestedText('instrument_info', 'bump_tested', false)}
                     disabled={!monitoringEnabled}
@@ -2050,7 +2225,8 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                 <span className="font-medium">Calibration Current:</span>
                 <label className="flex items-center gap-1">
                   <input
-                    type="checkbox"
+                    type="radio"
+                    name="calibration_current"
                     checked={formData.instrument_info.calibration_current === true}
                     onChange={() => setNestedText('instrument_info', 'calibration_current', true)}
                     disabled={!monitoringEnabled}
@@ -2059,7 +2235,8 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                 </label>
                 <label className="flex items-center gap-1">
                   <input
-                    type="checkbox"
+                    type="radio"
+                    name="calibration_current"
                     checked={formData.instrument_info.calibration_current === false}
                     onChange={() => setNestedText('instrument_info', 'calibration_current', false)}
                     disabled={!monitoringEnabled}
@@ -2080,7 +2257,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
               <input
                 name="issuer"
                 className="mt-1 w-full border rounded px-2 py-1"
-                value={formData.signatures.issuer}
+                value={formData.signatures.issuer ?? ''}
                 onChange={(e) =>
                   setFormData((prev) => ({
                     ...prev,
@@ -2094,7 +2271,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
               <input
                 name="receiver"
                 className="mt-1 w-full border rounded px-2 py-1"
-                value={formData.signatures.receiver}
+                value={formData.signatures.receiver ?? ''}
                 onChange={(e) =>
                   setFormData((prev) => ({
                     ...prev,
