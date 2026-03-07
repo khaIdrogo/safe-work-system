@@ -72,7 +72,7 @@ type ConfinedEntrants = { time_pairs: number; rows: ConfinedEntrantRow[] };
 type ConfinedAttendants = { rows: ConfinedAttendantRow[] };
 
 type Signatures = {
-  issuer?: string;
+  issuer?: string; // UI label changed to "Permit Authorizing Individual"
   receiver?: string;
   entry_supervisor?: string;
   fire_watch?: string; // Hot Work case
@@ -527,6 +527,10 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
 
   const [nextPermitNumber, setNextPermitNumber] = useState<number | null>(null);
 
+  // PRCS/NPRCS definition toggles
+  const [showPRCSDef, setShowPRCSDef] = useState(false);
+  const [showNPRCSDef, setShowNPRCSDef] = useState(false);
+
   /* ---------- Auth gate ---------- */
   useEffect(() => {
     (async () => {
@@ -796,7 +800,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
   const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
   const fmtTime = (d: Date) => d.toTimeString().slice(0, 5);
 
-  // Default to +24 hours after issue
+  // Default to +12 hours after issue
   useEffect(() => {
     const { date_issued, time_issued } = formData;
     if (!date_issued || !time_issued) return;
@@ -804,7 +808,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     const start = new Date(`${date_issued}T${time_issued}`);
     if (isNaN(start.getTime())) return;
 
-    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    const end = new Date(start.getTime() + 12 * 60 * 60 * 1000);
     setFormData((prev) => ({
       ...prev,
       date_expires: fmtDate(end),
@@ -814,6 +818,10 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
 
   const hotWorkItems = useMemo(() => transformHotWork(PERMIT_TYPES?.HOT_WORK ?? []), []);
   const anyHotWorkSelected = hotWorkItems.some((it) => !!formData.permit_types[it]);
+
+  // Show Area(s)/Object(s) when any hot work selected OR when "Other (specify)" has content
+  const showHotWorkArea =
+    anyHotWorkSelected || ((formData.permit_types?.hotwork_other ?? '').toString().trim().length > 0);
 
   const monitoringEnabled = useMemo(() => {
     const anySelected = (keys: string[]) => keys?.some((k) => !!formData.permit_types[k]);
@@ -1051,7 +1059,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
   const getNA  = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
     !!formData[section]?.[item]?.na;
 
-  // Special Conditions — support rename alias for hydration
+  // Special Conditions — alias for hydration if old label encountered
   const SC_ALIAS_NEW_TO_OLD: Record<string, string> = {
     'Fire fighting equipment readily accessible': 'Fire extinguishers readily accessible',
   };
@@ -1105,7 +1113,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     if (!formData.description_of_work?.trim()) missing.push('Description of Work');
 
     // Signatures: names required (scribble optional; tell me if you want scribble required too)
-    if (!formData.signatures?.issuer?.trim()) missing.push('Permit Issuer');
+    if (!formData.signatures?.issuer?.trim()) missing.push('Permit Authorizing Individual');
     if (!formData.signatures?.receiver?.trim()) missing.push('Permit Receiver');
     if (isPRCS && !formData.signatures?.entry_supervisor?.trim())
       missing.push('Confined Space Authorized Entry Supervisor');
@@ -1150,13 +1158,10 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
           const nowDate = now.toISOString().slice(0, 10);
           const nowTime = now.toTimeString().slice(0, 5);
           setFormData((prev) => ({ ...prev, date_issued: nowDate, time_issued: nowTime }));
-
-          // Also update local variables for validation below (after state update)
-          issuedDT.setTime(now.getTime());
         }
       }
 
-      // Validate expiration is after issue and ≤ 24h window
+      // Validate expiration is after issue and ≤ 12h window
       const issuedCheck = new Date(`${formData.date_issued}T${formData.time_issued}`);
       const expiresCheck = new Date(`${formData.date_expires}T${formData.time_expires}`);
       if (isNaN(issuedCheck.getTime()) || isNaN(expiresCheck.getTime())) {
@@ -1168,8 +1173,8 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         alert('Expiration must be AFTER the issue date/time.');
         return;
       }
-      if (diffMs > 24 * 60 * 60 * 1000) {
-        alert('Expiration cannot exceed 24 hours after the issue time.');
+      if (diffMs > 12 * 60 * 60 * 1000) {
+        alert('Expiration cannot exceed 12 hours after the issue time.');
         return;
       }
 
@@ -1447,7 +1452,8 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                     </label>
                   );
                 })}
-                {anyHotWorkSelected && (
+
+                {showHotWorkArea && (
                   <div className="mt-2">
                     <label className="font-medium text-red-600">
                       Area(s) / Object(s) on which Hot Work will be performed
@@ -1459,6 +1465,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                     />
                   </div>
                 )}
+
                 <div className="mt-2">
                   <label className="text-red-600 font-semibold">Other (specify)</label>
                   <input
@@ -1474,7 +1481,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
             <div className="border p-2 rounded">
               <div className="font-medium mb-2">CONFINED SPACE</div>
 
-              {/* PRCS / NPRCS guidance side-by-side, mutually exclusive */}
+              {/* PRCS / NPRCS with collapsible Definition links */}
               <div className="grid md:grid-cols-2 gap-4 mb-3">
                 {/* PRCS column */}
                 <div className="border rounded p-3">
@@ -1495,16 +1502,25 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                     />
                     <div>
                       <div className="font-semibold">PRCS</div>
-                      <div className="text-sm text-gray-700">
-                        A space is Permit-Required if it meets the confined space definition <b>AND</b> contains
-                        1 or more of the following serious hazards:
-                        <ul className="list-disc ml-5 mt-1">
-                          <li><b>Hazardous Atmosphere:</b> actual or potential for toxic gases, flammable vapors, or unsafe oxygen levels</li>
-                          <li><b>Engulfment:</b> Risk of being buried or captured by liquids or flowable solids (soil, grain, sand, etc.)</li>
-                          <li><b>Entrapment/Asphyxiation:</b> internal shapes like converging walls or tapering floors that could trap or suffocate an entrant</li>
-                          <li><b>Other Serious Hazard:</b> Any other recognized hazard, such as exposed live electrical, extreme heat, or unguarded moving machinery</li>
-                        </ul>
-                      </div>
+                      <button
+                        type="button"
+                        className="text-blue-700 underline mt-1 text-sm"
+                        onClick={() => setShowPRCSDef((s) => !s)}
+                      >
+                        Definition
+                      </button>
+                      {showPRCSDef && (
+                        <div className="text-sm text-gray-700 mt-2">
+                          A space is Permit-Required if it meets the confined space definition <b>AND</b> contains
+                          1 or more of the following serious hazards:
+                          <ul className="list-disc ml-5 mt-1">
+                            <li><b>Hazardous Atmosphere:</b> actual or potential for toxic gases, flammable vapors, or unsafe oxygen levels</li>
+                            <li><b>Engulfment:</b> Risk of being buried or captured by liquids or flowable solids (soil, grain, sand, etc.)</li>
+                            <li><b>Entrapment/Asphyxiation:</b> internal shapes like converging walls or tapering floors that could trap or suffocate an entrant</li>
+                            <li><b>Other Serious Hazard:</b> Any other recognized hazard, such as exposed live electrical, extreme heat, or unguarded moving machinery</li>
+                          </ul>
+                        </div>
+                      )}
                     </div>
                   </label>
                 </div>
@@ -1528,12 +1544,21 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                     />
                     <div>
                       <div className="font-semibold">NPRCS</div>
-                      <div className="text-sm text-gray-700">
-                        A space is Non-Permit only if it meets the confined space definition but <b>does not</b> contain any hazard capable of causing death or serious physical harm:
-                        <ul className="list-disc ml-5 mt-1">
-                          <li><b>Hazard Elimination:</b> a PRCS may be reclassified as non-permit only if all hazards are completely eliminated (e.g., through permanent guarding or lockout)</li>
-                        </ul>
-                      </div>
+                      <button
+                        type="button"
+                        className="text-blue-700 underline mt-1 text-sm"
+                        onClick={() => setShowNPRCSDef((s) => !s)}
+                      >
+                        Definition
+                      </button>
+                      {showNPRCSDef && (
+                        <div className="text-sm text-gray-700 mt-2">
+                          A space is Non-Permit only if it meets the confined space definition but <b>does not</b> contain any hazard capable of causing death or serious physical harm:
+                          <ul className="list-disc ml-5 mt-1">
+                            <li><b>Hazard Elimination:</b> a PRCS may be reclassified as non-permit only if all hazards are completely eliminated (e.g., through permanent guarding or lockout)</li>
+                          </ul>
+                        </div>
+                      )}
                     </div>
                   </label>
                 </div>
@@ -2493,9 +2518,9 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Signatures</div>
           <div className="p-3 grid md:grid-cols-2 gap-4">
-            {/* Permit Issuer */}
+            {/* Permit Authorizing Individual (formerly "Permit Issuer") */}
             <div>
-              <label className="font-medium">Permit Issuer (required)</label>
+              <label className="font-medium">Permit Authorizing Individual (required)</label>
               <input
                 name="issuer"
                 className="mt-1 w-full border rounded px-2 py-1"
@@ -2549,7 +2574,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
 
             {/* Entry Supervisor (PRCS only) */}
             {isPRCS && (
-              <div className="md:col-span-2">
+              <div>
                 <label className="font-medium">Confined Space Authorized Entry Supervisor (required)</label>
                 <input
                   className="mt-1 w-full border rounded px-2 py-1"
@@ -2575,9 +2600,9 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
               </div>
             )}
 
-            {/* Fire Watch (only if Hot Work) */}
+            {/* Fire Watch (only if Hot Work) — make same size as other single-column signature blocks */}
             {anyHotWorkSelected && (
-              <div className="md:col-span-2">
+              <div>
                 <label className="font-medium">Fire Watch (required for Hot Work)</label>
                 <input
                   className="mt-1 w-full border rounded px-2 py-1"
