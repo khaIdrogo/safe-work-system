@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
   PERMIT_TYPES,
@@ -19,7 +19,7 @@ type PermitFormProps = {
   initialData?: any;
 };
 
-/* ---------------- Stronger TS types (rec 9) ---------------- */
+/* ---------------- Stronger TS types ---------------- */
 type AirMonitoringRow = { 'Initial Reading': string } & Record<`t${number}`, string>;
 type AirMonitoringTable = Record<string, AirMonitoringRow>;
 type AirMonitoringInitials = { initial?: string } & Record<`t${number}`, string>;
@@ -40,7 +40,7 @@ type EnergyControl = {
   lock_box_number?: string;
 };
 
-type YesNa = { yes?: boolean; na?: boolean };
+type YesNa = { yes?: boolean; no?: boolean; na?: boolean }; // tri-state
 
 type HazardReduction = Record<string, YesNa> & {
   other_text?: string;
@@ -71,7 +71,19 @@ type ConfinedAttendantRow = { name: string; times: TimePairStartStop[] };
 type ConfinedEntrants = { time_pairs: number; rows: ConfinedEntrantRow[] };
 type ConfinedAttendants = { rows: ConfinedAttendantRow[] };
 
-type Signatures = { issuer?: string; receiver?: string; entry_supervisor?: string };
+type Signatures = {
+  issuer?: string;
+  receiver?: string;
+  entry_supervisor?: string;
+  fire_watch?: string; // Hot Work case
+};
+
+type SignatureImages = {
+  issuer?: string;            // dataURL
+  receiver?: string;
+  entry_supervisor?: string;
+  fire_watch?: string;
+};
 
 type PermitFormState = {
   facility: string;
@@ -101,6 +113,7 @@ type PermitFormState = {
   confined_attendants: ConfinedAttendants;
   confined_rescue_team: ConfinedAttendants;
   signatures: Signatures;
+  signatures_drawn?: SignatureImages;
 };
 
 /* ---------------- Air Monitoring ---------------- */
@@ -182,7 +195,7 @@ function normalizeHeadItem(it: string): string {
 }
 
 function buildPPERender(additionalPpe: typeof ADDITIONAL_PPE): PPECategory[] {
-  // HEAD/FACE/RESPIRATORY (rec 2: support both keys safely)
+  // HEAD/FACE/RESPIRATORY (support both keys safely)
   const headOrig =
     (additionalPpe as any).HAND_FACE_RESPIRATORY ??
     (additionalPpe as any).HEAD_FACE_RESPIRATORY ??
@@ -298,7 +311,7 @@ function transformHazard(items: string[]): string[] {
   });
 }
 
-/* ---------------- Equipment Condition (replaced list) ---------------- */
+/* ---------------- Equipment Condition (fixed list) ---------------- */
 const EQUIPMENT_CONDITION_NEW = [
   'Equipment In-Service',
   'Equipment depressurized/drained',
@@ -316,7 +329,9 @@ function renameSC(item: string): string {
   }
   if (item === 'Fire resistant/blanket or barriers are in place') return 'Fire resistant blankets or barriers are in place';
   if (item === 'Fire Watch required (assigned as course)') return 'Fire Watch required and assigned';
-  if (item === 'Fire extinguishers required') return 'Fire extinguishers readily accessible';
+  if (item === 'Fire extinguishers required' || item === 'Fire extinguishers readily accessible') {
+    return 'Fire fighting equipment readily accessible';
+  }
   if (item === 'Audit for safety watch/spotter required') return 'Additional fire/safety watch/spotter required';
   if (item === 'Ventilation as required') return 'Ventilation is adequate';
   if (item === 'Multiple personnel plan or attendant required') return 'Multiple confined space attendants required';
@@ -361,6 +376,85 @@ function buildSpecialConditionsList(left: string[], right: string[]): string[] {
   return [target, areaHazards, wallFloor, flamRemoved, fireWatch, ...combined.filter((x) => x !== target)];
 }
 
+/* ---------------- Signature Canvas ---------------- */
+function SignatureCanvas({
+  value,
+  onChange,
+  disabled,
+}: {
+  value?: string;
+  onChange: (dataUrl?: string) => void;
+  disabled?: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isDrawingRef = useRef(false);
+
+  const getCtx = () => canvasRef.current?.getContext('2d') ?? null;
+
+  const getXY = (e: any) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  };
+
+  const start = (e: any) => {
+    if (disabled || !canvasRef.current) return;
+    isDrawingRef.current = true;
+    const ctx = getCtx();
+    if (!ctx) return;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    const { x, y } = getXY(e);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+  const move = (e: any) => {
+    if (disabled || !isDrawingRef.current) return;
+    const ctx = getCtx();
+    if (!ctx) return;
+    const { x, y } = getXY(e);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+  const end = () => {
+    if (!isDrawingRef.current) return;
+    isDrawingRef.current = false;
+    if (!canvasRef.current) return;
+    onChange(canvasRef.current.toDataURL('image/png'));
+  };
+  const clear = () => {
+    const ctx = getCtx();
+    if (!ctx || !canvasRef.current) return;
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    onChange(undefined);
+  };
+
+  return (
+    <div className="space-y-1">
+      <div
+        className="border rounded bg-white touch-none"
+        onMouseDown={start}
+        onMouseMove={move}
+        onMouseUp={end}
+        onMouseLeave={end}
+        onTouchStart={start}
+        onTouchMove={move}
+        onTouchEnd={end}
+      >
+        <canvas ref={canvasRef} width={500} height={160} className="w-full h-40" />
+      </div>
+      <div className="flex gap-2">
+        <button type="button" className="px-2 py-1 bg-gray-200 rounded" onClick={clear} disabled={disabled}>
+          Clear
+        </button>
+        {value && <span className="text-xs text-gray-600">Signature captured</span>}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Component ---------------- */
 export default function PermitForm({ mode, recordId, initialData }: PermitFormProps) {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -425,7 +519,8 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         times: Array.from({ length: 2 }, () => ({ start: '', stop: '' })),
       })),
     },
-    signatures: { issuer: '', receiver: '', entry_supervisor: '' },
+    signatures: { issuer: '', receiver: '', entry_supervisor: '', fire_watch: '' },
+    signatures_drawn: {},
   });
 
   const isClosed = (formData.status ?? initialData?.status) === 'closed';
@@ -523,7 +618,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---------- Sync Air Monitoring column count & headers on hydration (rec 1 & 5) ---------- */
+  /* ---------- Sync Air Monitoring column count & headers on hydration ---------- */
   useEffect(() => {
     const a = formData.air_monitoring as JsonMap | undefined;
     const h = formData.air_monitoring_headers as JsonMap | undefined;
@@ -541,9 +636,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
 
     colKeys.sort((x, y) => Number(x.slice(1)) - Number(y.slice(1)));
 
-    if (colKeys.length !== timeColCount) {
-      setTimeColCount(colKeys.length);
-    }
+    if (colKeys.length !== timeColCount) setTimeColCount(colKeys.length);
 
     if (!h) {
       setFormData((prev) => {
@@ -557,7 +650,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.air_monitoring, formData.air_monitoring_headers]);
 
-  /* ---------- Persisted N/A toggles hydration (rec 3) ---------- */
+  /* ---------- Persisted N/A toggles hydration ---------- */
   useEffect(() => {
     const saved = (formData.air_monitoring as JsonMap)?.meta?.voc_na;
     if (typeof saved === 'boolean') setVocNA(saved);
@@ -570,7 +663,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.energy_control]);
 
-  /* ---------- Helper: ensure AirMonitoringRow shape (patch) ---------- */
+  /* ---------- Helper: ensure AirMonitoringRow shape ---------- */
   const ensureAirRow = (row?: Partial<AirMonitoringRow>): AirMonitoringRow => {
     return {
       'Initial Reading': '',
@@ -703,6 +796,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
   const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
   const fmtTime = (d: Date) => d.toTimeString().slice(0, 5);
 
+  // Default to +24 hours after issue
   useEffect(() => {
     const { date_issued, time_issued } = formData;
     if (!date_issued || !time_issued) return;
@@ -710,7 +804,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     const start = new Date(`${date_issued}T${time_issued}`);
     if (isNaN(start.getTime())) return;
 
-    const end = new Date(start.getTime() + 12 * 60 * 60 * 1000);
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
     setFormData((prev) => ({
       ...prev,
       date_expires: fmtDate(end),
@@ -900,7 +994,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     });
   };
 
-  /* ---------- Persisted toggles (rec 3) ---------- */
+  /* ---------- Persisted toggles ---------- */
   const toggleVocNA = () => {
     setVocNA((prev) => {
       const next = !prev;
@@ -933,13 +1027,91 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     });
   };
 
-  /* ---------- Required-field validation (rec 4) ---------- */
+  /* ---------- Yes/No/NA helpers ---------- */
+  const setYesNA = (
+    section: 'hazard_reduction' | 'equipment_condition',
+    item: string,
+    field: 'yes' | 'no' | 'na',
+    value: boolean
+  ) => {
+    setFormData((prev) => {
+      const sec = (prev[section] as JsonMap) ?? {};
+      const cur = (sec[item] as JsonMap) ?? { yes: false, no: false, na: false };
+      const next = { ...cur, [field]: value };
+      if (field === 'yes' && value) { next.no = false; next.na = false; }
+      if (field === 'no'  && value) { next.yes = false; next.na = false; }
+      if (field === 'na'  && value) { next.yes = false; next.no = false; }
+      return { ...prev, [section]: { ...sec, [item]: next } };
+    });
+  };
+  const getYes = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
+    !!formData[section]?.[item]?.yes;
+  const getNo  = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
+    !!(formData[section] as any)?.[item]?.no;
+  const getNA  = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
+    !!formData[section]?.[item]?.na;
+
+  // Special Conditions — support rename alias for hydration
+  const SC_ALIAS_NEW_TO_OLD: Record<string, string> = {
+    'Fire fighting equipment readily accessible': 'Fire extinguishers readily accessible',
+  };
+
+  const setSCYesNA = (item: string, field: 'yes' | 'no' | 'na', value: boolean) => {
+    setFormData((prev) => {
+      const sc = (prev.special_conditions as JsonMap) ?? {};
+      const curNew = (sc[item] as JsonMap) ?? { yes: false, no: false, na: false };
+      const next = { ...curNew, [field]: value };
+      if (field === 'yes' && value) { next.no = false; next.na = false; }
+      if (field === 'no'  && value) { next.yes = false; next.na = false; }
+      if (field === 'na'  && value) { next.yes = false; next.no = false; }
+
+      const updated = { ...sc, [item]: next };
+      const oldKey = SC_ALIAS_NEW_TO_OLD[item];
+      if (oldKey && updated[oldKey]) {
+        // remove the old key to avoid duplicate states
+        const { [oldKey]: _removed, ...rest } = updated;
+        return { ...prev, special_conditions: rest };
+      }
+      return { ...prev, special_conditions: updated };
+    });
+  };
+  const getSCYes = (item: string) => {
+    const v = formData.special_conditions?.[item]?.yes;
+    if (v !== undefined) return !!v;
+    const oldKey = SC_ALIAS_NEW_TO_OLD[item];
+    return oldKey ? !!formData.special_conditions?.[oldKey]?.yes : false;
+  };
+  const getSCNo = (item: string) => {
+    const v = (formData.special_conditions as any)?.[item]?.no;
+    if (v !== undefined) return !!v;
+    const oldKey = SC_ALIAS_NEW_TO_OLD[item];
+    return oldKey ? !!(formData.special_conditions as any)?.[oldKey]?.no : false;
+  };
+  const getSCNA = (item: string) => {
+    const v = formData.special_conditions?.[item]?.na;
+    if (v !== undefined) return !!v;
+    const oldKey = SC_ALIAS_NEW_TO_OLD[item];
+    return oldKey ? !!formData.special_conditions?.[oldKey]?.na : false;
+  };
+
+  const minTime = minTimeForDate(formData.date_issued);
+
+  /* ---------- Required-field validation ---------- */
   const validateRequired = () => {
     const missing: string[] = [];
     if (!formData.facility?.trim()) missing.push('Facility');
     if (!formData.location?.trim()) missing.push('Location');
     if (!formData.contractor?.trim()) missing.push('Contractor');
     if (!formData.description_of_work?.trim()) missing.push('Description of Work');
+
+    // Signatures: names required (scribble optional; tell me if you want scribble required too)
+    if (!formData.signatures?.issuer?.trim()) missing.push('Permit Issuer');
+    if (!formData.signatures?.receiver?.trim()) missing.push('Permit Receiver');
+    if (isPRCS && !formData.signatures?.entry_supervisor?.trim())
+      missing.push('Confined Space Authorized Entry Supervisor');
+    if (anyHotWorkSelected && !formData.signatures?.fire_watch?.trim())
+      missing.push('Fire Watch');
+
     return missing;
   };
 
@@ -948,20 +1120,11 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     try {
       if (!userId) return alert('Not signed in');
 
+      // Required names (and basic fields)
       const missing = validateRequired();
       if (missing.length) {
         alert(`Please complete required fields: ${missing.join(', ')}`);
         return;
-      }
-
-      // Guard: For CREATE, block past times. For EDIT, allow (we also freeze date/time anyway).
-      if (mode === 'create') {
-        const issued = new Date(`${formData.date_issued}T${formData.time_issued}`);
-        const nowLocal = new Date();
-        if (isNaN(issued.getTime()) || issued.getTime() < nowLocal.getTime()) {
-          alert('Date/Time Issued cannot be in the past.');
-          return;
-        }
       }
 
       // Confined Space rule
@@ -976,6 +1139,37 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
 
       if (isClosed) {
         alert('This permit is CLOSED and cannot be edited.');
+        return;
+      }
+
+      // In CREATE mode: if issue time drifted to the past, normalize to now.
+      if (mode === 'create') {
+        const now = new Date();
+        const issuedDT = new Date(`${formData.date_issued}T${formData.time_issued}`);
+        if (isNaN(issuedDT.getTime()) || issuedDT.getTime() < now.getTime()) {
+          const nowDate = now.toISOString().slice(0, 10);
+          const nowTime = now.toTimeString().slice(0, 5);
+          setFormData((prev) => ({ ...prev, date_issued: nowDate, time_issued: nowTime }));
+
+          // Also update local variables for validation below (after state update)
+          issuedDT.setTime(now.getTime());
+        }
+      }
+
+      // Validate expiration is after issue and ≤ 24h window
+      const issuedCheck = new Date(`${formData.date_issued}T${formData.time_issued}`);
+      const expiresCheck = new Date(`${formData.date_expires}T${formData.time_expires}`);
+      if (isNaN(issuedCheck.getTime()) || isNaN(expiresCheck.getTime())) {
+        alert('Invalid Issue or Expiration date/time.');
+        return;
+      }
+      const diffMs = expiresCheck.getTime() - issuedCheck.getTime();
+      if (diffMs < 0) {
+        alert('Expiration must be AFTER the issue date/time.');
+        return;
+      }
+      if (diffMs > 24 * 60 * 60 * 1000) {
+        alert('Expiration cannot exceed 24 hours after the issue time.');
         return;
       }
 
@@ -1071,7 +1265,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
       setClosing(true);
       const { error } = await supabase
         .from('safe_work_permits')
-        .update({ status: 'closed' }) // canonical
+        .update({ status: 'closed' })
         .eq('id', recordId);
 
       setClosing(false);
@@ -1102,41 +1296,6 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
     const end = SPECIAL_LIST.indexOf('No unusual odors/vapors present');
     return { scRedStartIdx: start, scRedEndIdx: end };
   }, [SPECIAL_LIST]);
-
-  const setYesNA = (
-    section: 'hazard_reduction' | 'equipment_condition',
-    item: string,
-    field: 'yes' | 'na',
-    value: boolean
-  ) => {
-    setFormData((prev) => {
-      const sec = (prev[section] as JsonMap) ?? {};
-      const cur = (sec[item] as JsonMap) ?? { yes: false, na: false };
-      const next = { ...cur, [field]: value };
-      if (field === 'yes' && value) next.na = false;
-      if (field === 'na' && value) next.yes = false;
-      return { ...prev, [section]: { ...sec, [item]: next } };
-    });
-  };
-  const getYes = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
-    !!formData[section]?.[item]?.yes;
-  const getNA = (section: 'hazard_reduction' | 'equipment_condition', item: string) =>
-    !!formData[section]?.[item]?.na;
-
-  const setSCYesNA = (item: string, field: 'yes' | 'na', value: boolean) => {
-    setFormData((prev) => {
-      const sc = (prev.special_conditions as JsonMap) ?? {};
-      const cur = (sc[item] as JsonMap) ?? { yes: false, na: false };
-      const next = { ...cur, [field]: value };
-      if (field === 'yes' && value) next.na = false;
-      if (field === 'na' && value) next.yes = false;
-      return { ...prev, special_conditions: { ...sc, [item]: next } };
-    });
-  };
-  const getSCYes = (item: string) => !!formData.special_conditions?.[item]?.yes;
-  const getSCNA = (item: string) => !!formData.special_conditions?.[item]?.na;
-
-  const minTime = minTimeForDate(formData.date_issued);
 
   return (
     <div className="space-y-4">
@@ -1208,8 +1367,8 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                 name="date_expires"
                 type="date"
                 value={formData.date_expires}
+                onChange={(e) => setFormData((prev)=>({...prev, date_expires: e.target.value}))}
                 className="mt-1 w-full border rounded px-2 py-1"
-                readOnly
               />
             </div>
             <div>
@@ -1218,8 +1377,8 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                 name="time_expires"
                 type="time"
                 value={formData.time_expires}
+                onChange={(e) => setFormData((prev)=>({...prev, time_expires: e.target.value}))}
                 className="mt-1 w-full border rounded px-2 py-1"
-                readOnly
               />
             </div>
 
@@ -1290,7 +1449,9 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                 })}
                 {anyHotWorkSelected && (
                   <div className="mt-2">
-                    <label className="font-medium">Exact area of Hot Work</label>
+                    <label className="font-medium text-red-600">
+                      Area(s) / Object(s) on which Hot Work will be performed
+                    </label>
                     <input
                       className="mt-1 w-full border rounded px-2 py-1"
                       value={(formData.permit_types?.hotwork_exact_area as string) ?? ''}
@@ -1311,43 +1472,74 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
 
             {/* CONFINED SPACE */}
             <div className="border p-2 rounded">
-              <div className="font-medium mb-2 flex items-center gap-4">
-                <span>CONFINED SPACE</span>
-                <label className="flex items-center gap-1 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={!!formData.permit_types.PRCS}
-                    onChange={() =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        permit_types: {
-                          ...(prev.permit_types ?? {}),
-                          PRCS: !prev.permit_types?.PRCS,
-                          NPRCS: false,
-                        },
-                      }))
-                    }
-                  />
-                  PRCS
-                </label>
-                <label className="flex items-center gap-1 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={!!formData.permit_types.NPRCS}
-                    onChange={() =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        permit_types: {
-                          ...(prev.permit_types ?? {}),
-                          NPRCS: !prev.permit_types?.NPRCS,
-                          PRCS: false,
-                        },
-                      }))
-                    }
-                  />
-                  NPRCS
-                </label>
+              <div className="font-medium mb-2">CONFINED SPACE</div>
+
+              {/* PRCS / NPRCS guidance side-by-side, mutually exclusive */}
+              <div className="grid md:grid-cols-2 gap-4 mb-3">
+                {/* PRCS column */}
+                <div className="border rounded p-3">
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={!!formData.permit_types.PRCS}
+                      onChange={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          permit_types: {
+                            ...(prev.permit_types ?? {}),
+                            PRCS: !prev.permit_types?.PRCS,
+                            NPRCS: false,
+                          },
+                        }))
+                      }
+                    />
+                    <div>
+                      <div className="font-semibold">PRCS</div>
+                      <div className="text-sm text-gray-700">
+                        A space is Permit-Required if it meets the confined space definition <b>AND</b> contains
+                        1 or more of the following serious hazards:
+                        <ul className="list-disc ml-5 mt-1">
+                          <li><b>Hazardous Atmosphere:</b> actual or potential for toxic gases, flammable vapors, or unsafe oxygen levels</li>
+                          <li><b>Engulfment:</b> Risk of being buried or captured by liquids or flowable solids (soil, grain, sand, etc.)</li>
+                          <li><b>Entrapment/Asphyxiation:</b> internal shapes like converging walls or tapering floors that could trap or suffocate an entrant</li>
+                          <li><b>Other Serious Hazard:</b> Any other recognized hazard, such as exposed live electrical, extreme heat, or unguarded moving machinery</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* NPRCS column */}
+                <div className="border rounded p-3">
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={!!formData.permit_types.NPRCS}
+                      onChange={() =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          permit_types: {
+                            ...(prev.permit_types ?? {}),
+                            NPRCS: !prev.permit_types?.NPRCS,
+                            PRCS: false,
+                          },
+                        }))
+                      }
+                    />
+                    <div>
+                      <div className="font-semibold">NPRCS</div>
+                      <div className="text-sm text-gray-700">
+                        A space is Non-Permit only if it meets the confined space definition but <b>does not</b> contain any hazard capable of causing death or serious physical harm:
+                        <ul className="list-disc ml-5 mt-1">
+                          <li><b>Hazard Elimination:</b> a PRCS may be reclassified as non-permit only if all hazards are completely eliminated (e.g., through permanent guarding or lockout)</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </label>
+                </div>
               </div>
+
+              {/* The specific Confined Space items list remains below */}
               <div className="space-y-2">
                 {confinedList.map((item) => {
                   const checked = !!(formData.permit_types as JsonMap)[item];
@@ -1543,9 +1735,10 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
           <div className="p-3 grid md:grid-cols-2 gap-6">
             {/* Hazard Reduction */}
             <div>
-              <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
+              <div className="grid grid-cols-[1fr,60px,60px,60px] gap-2 items-center font-medium mb-2">
                 <div>Hazard Reduction</div>
                 <div className="text-center">Yes</div>
+                <div className="text-center">No</div>
                 <div className="text-center">N/A</div>
               </div>
               <div className="space-y-1">
@@ -1555,7 +1748,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                   return (
                     <div
                       key={item}
-                      className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1"
+                      className="grid grid-cols-[1fr,60px,60px,60px] gap-2 items-center border rounded px-2 py-1"
                     >
                       <div className="text-sm">{item}</div>
                       <div className="flex justify-center">
@@ -1568,13 +1761,20 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                       <div className="flex justify-center">
                         <input
                           type="checkbox"
+                          checked={getNo('hazard_reduction', item)}
+                          onChange={(e) => setYesNA('hazard_reduction', item, 'no', e.target.checked)}
+                        />
+                      </div>
+                      <div className="flex justify-center">
+                        <input
+                          type="checkbox"
                           checked={getNA('hazard_reduction', item)}
                           onChange={(e) => setYesNA('hazard_reduction', item, 'na', e.target.checked)}
                         />
                       </div>
 
                       {isOther && getYes('hazard_reduction', item) && (
-                        <div className="col-span-3 mt-1">
+                        <div className="col-span-4 mt-1">
                           <label className="text-sm font-medium">Other (specify)</label>
                           <input
                             className="mt-1 w-full border rounded px-2 py-1"
@@ -1585,7 +1785,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                       )}
 
                       {isRadio && getYes('hazard_reduction', item) && (
-                        <div className="col-span-3 mt-1">
+                        <div className="col-span-4 mt-1">
                           <label className="text-sm font-medium">Radio Channel #</label>
                           <input
                             className="mt-1 w-40 border rounded px-2 py-1"
@@ -1602,9 +1802,10 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
 
             {/* Equipment Condition */}
             <div>
-              <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
+              <div className="grid grid-cols-[1fr,60px,60px,60px] gap-2 items-center font-medium mb-2">
                 <div>Equipment Condition</div>
                 <div className="text-center">Yes</div>
+                <div className="text-center">No</div>
                 <div className="text-center">N/A</div>
               </div>
               <div className="space-y-1">
@@ -1613,7 +1814,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                   return (
                     <div
                       key={item}
-                      className="grid grid-cols-[1fr,60px,60px] gap-2 items-center border rounded px-2 py-1"
+                      className="grid grid-cols-[1fr,60px,60px,60px] gap-2 items-center border rounded px-2 py-1"
                     >
                       <div className="text-sm">{item}</div>
                       <div className="flex justify-center">
@@ -1626,13 +1827,20 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                       <div className="flex justify-center">
                         <input
                           type="checkbox"
+                          checked={getNo('equipment_condition', item)}
+                          onChange={(e) => setYesNA('equipment_condition', item, 'no', e.target.checked)}
+                        />
+                      </div>
+                      <div className="flex justify-center">
+                        <input
+                          type="checkbox"
                           checked={getNA('equipment_condition', item)}
                           onChange={(e) => setYesNA('equipment_condition', item, 'na', e.target.checked)}
                         />
                       </div>
 
                       {isOther && getYes('equipment_condition', item) && (
-                        <div className="col-span-3 mt-1">
+                        <div className="col-span-4 mt-1">
                           <label className="text-sm font-medium">Other (specify)</label>
                           <input
                             className="mt-1 w-full border rounded px-2 py-1"
@@ -1705,9 +1913,10 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Special Conditions</div>
           <div className="p-3">
-            <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center font-medium mb-2">
+            <div className="grid grid-cols-[1fr,60px,60px,60px] gap-2 items-center font-medium mb-2">
               <div>Item</div>
               <div className="text-center">Yes</div>
+              <div className="text-center">No</div>
               <div className="text-center">N/A</div>
             </div>
 
@@ -1716,6 +1925,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                 const isComm = item === 'Communication with entrants has been determined';
                 const isFireWatch = item === 'Fire Watch required and assigned';
                 const yes = getSCYes(item);
+                const no = getSCNo(item);
                 const na = getSCNA(item);
 
                 const isRed =
@@ -1723,7 +1933,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
 
                 return (
                   <div key={item} className="border rounded px-2 py-1">
-                    <div className="grid grid-cols-[1fr,60px,60px] gap-2 items-center">
+                    <div className="grid grid-cols-[1fr,60px,60px,60px] gap-2 items-center">
                       <div className={`text-sm flex items-center gap-2 flex-wrap ${isRed ? 'text-red-600' : ''}`}>
                         <span>{item}</span>
                         {isComm && yes && (
@@ -1743,6 +1953,13 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                           type="checkbox"
                           checked={yes}
                           onChange={(e) => setSCYesNA(item, 'yes', e.target.checked)}
+                        />
+                      </div>
+                      <div className="flex justify-center">
+                        <input
+                          type="checkbox"
+                          checked={no}
+                          onChange={(e) => setSCYesNA(item, 'no', e.target.checked)}
                         />
                       </div>
                       <div className="flex justify-center">
@@ -1768,7 +1985,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                             />
                             30 min
                           </label>
-                        <label className="flex items-center gap-1">
+                          <label className="flex items-center gap-1">
                             <input
                               type="checkbox"
                               checked={formData.special_conditions.fire_watch_after === '>30'}
@@ -2220,7 +2437,7 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
             </div>
 
             <div className="md:col-span-3 grid md:grid-cols-2 gap-4">
-              {/* Radios (rec 8) */}
+              {/* Radios */}
               <div className="flex items-center gap-6">
                 <span className="font-medium">Bump Tested Before Use:</span>
                 <label className="flex items-center gap-1">
@@ -2276,8 +2493,9 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
         <div className="border rounded">
           <div className="bg-kmGray px-3 py-2 font-semibold">Signatures</div>
           <div className="p-3 grid md:grid-cols-2 gap-4">
+            {/* Permit Issuer */}
             <div>
-              <label className="font-medium">Permit Issuer</label>
+              <label className="font-medium">Permit Issuer (required)</label>
               <input
                 name="issuer"
                 className="mt-1 w-full border rounded px-2 py-1"
@@ -2289,9 +2507,22 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                   }))
                 }
               />
+              <div className="mt-2">
+                <SignatureCanvas
+                  value={formData.signatures_drawn?.issuer}
+                  onChange={(dataUrl) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      signatures_drawn: { ...(prev.signatures_drawn ?? {}), issuer: dataUrl },
+                    }))
+                  }
+                />
+              </div>
             </div>
+
+            {/* Permit Receiver */}
             <div>
-              <label className="font-medium">Permit Receiver</label>
+              <label className="font-medium">Permit Receiver (required)</label>
               <input
                 name="receiver"
                 className="mt-1 w-full border rounded px-2 py-1"
@@ -2303,11 +2534,23 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                   }))
                 }
               />
+              <div className="mt-2">
+                <SignatureCanvas
+                  value={formData.signatures_drawn?.receiver}
+                  onChange={(dataUrl) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      signatures_drawn: { ...(prev.signatures_drawn ?? {}), receiver: dataUrl },
+                    }))
+                  }
+                />
+              </div>
             </div>
 
+            {/* Entry Supervisor (PRCS only) */}
             {isPRCS && (
               <div className="md:col-span-2">
-                <label className="font-medium">Confined Space Authorized Entry Supervisor</label>
+                <label className="font-medium">Confined Space Authorized Entry Supervisor (required)</label>
                 <input
                   className="mt-1 w-full border rounded px-2 py-1"
                   value={formData.signatures.entry_supervisor ?? ''}
@@ -2318,6 +2561,45 @@ export default function PermitForm({ mode, recordId, initialData }: PermitFormPr
                     }))
                   }
                 />
+                <div className="mt-2">
+                  <SignatureCanvas
+                    value={formData.signatures_drawn?.entry_supervisor}
+                    onChange={(dataUrl) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        signatures_drawn: { ...(prev.signatures_drawn ?? {}), entry_supervisor: dataUrl },
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Fire Watch (only if Hot Work) */}
+            {anyHotWorkSelected && (
+              <div className="md:col-span-2">
+                <label className="font-medium">Fire Watch (required for Hot Work)</label>
+                <input
+                  className="mt-1 w-full border rounded px-2 py-1"
+                  value={formData.signatures.fire_watch ?? ''}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      signatures: { ...(prev.signatures ?? {}), fire_watch: e.target.value },
+                    }))
+                  }
+                />
+                <div className="mt-2">
+                  <SignatureCanvas
+                    value={formData.signatures_drawn?.fire_watch}
+                    onChange={(dataUrl) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        signatures_drawn: { ...(prev.signatures_drawn ?? {}), fire_watch: dataUrl },
+                      }))
+                    }
+                  />
+                </div>
               </div>
             )}
           </div>
